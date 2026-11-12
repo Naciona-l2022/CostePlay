@@ -92,6 +92,21 @@
       } catch {}
     };
 
+    // ---------- MODO APP ANDROID (la misma página dentro de la app CostePlay) ----------
+    // La app agrega "CostePlayApp" al user-agent y expone el canal window.CostePlayApp
+    const IS_ANDROID_APP =
+      /CostePlayApp/.test((typeof navigator !== 'undefined' && navigator.userAgent) || '') ||
+      Boolean(typeof window !== 'undefined' && window.CostePlayApp && typeof window.CostePlayApp.postMessage === 'function');
+    const appBridge = (msg) => {
+      try {
+        if (window.CostePlayApp && typeof window.CostePlayApp.postMessage === 'function') {
+          window.CostePlayApp.postMessage(JSON.stringify(msg));
+          return true;
+        }
+      } catch {}
+      return false;
+    };
+
     const todayISO = () => {
       const t = new Date();
       return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
@@ -197,6 +212,7 @@
 
     const copyToClipboard = async (text) => {
       const value = String(text || '');
+      if (IS_ANDROID_APP && appBridge({ type: 'copy', text: value })) return true;
       try {
         if (navigator.clipboard && window.isSecureContext) {
           await navigator.clipboard.writeText(value);
@@ -217,6 +233,8 @@
     };
 
     const downloadJSON = (obj, filename) => {
+      // En la app Android se guarda/comparte con el menú nativo
+      if (IS_ANDROID_APP && appBridge({ type: 'saveFile', name: filename, content: JSON.stringify(obj, null, 2) })) return;
       const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -519,8 +537,39 @@
         return () => unsubscribe();
       }, []);
 
+      // App Android: el login de Google lo hace Android (nativo) y nos entrega el token
+      useEffect(() => {
+        if (!IS_ANDROID_APP) return;
+        window.__costeplayNativeLogin = async (idToken) => {
+          try {
+            const credential = window.firebase.auth.GoogleAuthProvider.credential(String(idToken || ''));
+            await window.firebase.auth().signInWithCredential(credential);
+          } catch (err) {
+            setAuthError(authErrorMessage(err));
+            setSigningIn(false);
+          }
+        };
+        window.__costeplayNativeLoginError = (msg) => {
+          if (msg) setAuthError(String(msg));
+          setSigningIn(false);
+        };
+        appBridge({ type: 'ready' });
+        return () => {
+          delete window.__costeplayNativeLogin;
+          delete window.__costeplayNativeLoginError;
+        };
+      }, []);
+
       const signInWithGoogle = async () => {
         setAuthError('');
+        if (IS_ANDROID_APP) {
+          setSigningIn(true);
+          if (!appBridge({ type: 'googleSignIn' })) {
+            setSigningIn(false);
+            setAuthError('No se pudo comunicar con la app. Cierra y vuelve a abrir CostePlay.');
+          }
+          return;
+        }
         if (window.location.protocol === 'file:') {
           setAuthError(authErrorMessage({ code: 'auth/operation-not-supported-in-this-environment' }));
           return;
@@ -544,6 +593,7 @@
       const signOut = async () => {
         if (pendingRef.current > 0 && !window.confirm('Hay cambios que todavía se están subiendo a la nube. Si cierras sesión ahora se pueden perder. ¿Cerrar sesión de todas formas?')) return;
         try { await window.firebase.auth().signOut(); } catch {}
+        if (IS_ANDROID_APP) appBridge({ type: 'signOut' }); // para que Android vuelva a preguntar la cuenta
       };
 
       // ---------- GUARDADO EN LA NUBE ----------
@@ -964,7 +1014,8 @@
           alert(`El número de WhatsApp de ${client.name} no es válido. Edítalo e incluye el indicativo (57...).`);
           return;
         }
-        window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener');
+        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+        if (!(IS_ANDROID_APP && appBridge({ type: 'openExternal', url: waUrl }))) window.open(waUrl, '_blank', 'noopener');
       };
 
       const markMonthPaid = (client) => {
