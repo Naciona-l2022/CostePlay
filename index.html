@@ -635,7 +635,13 @@
       // Se guardan en Firebase en backups/{uid} (datos) y backupsIndex/{uid} (lista liviana)
       const createBackup = async (type, note = '') => {
         const uid = uidRef.current;
-        if (!uid || backupBusyRef.current) return false;
+        if (!uid) return false;
+        if (backupBusyRef.current) {
+          if (type === 'auto') return false; // la automática se salta si ya hay otra en curso
+          // una manual (o "Antes de restaurar") espera a que termine la que está en curso
+          for (let w = 0; w < 100 && backupBusyRef.current; w++) await new Promise(r => setTimeout(r, 100));
+          if (backupBusyRef.current) return false;
+        }
         const cur = stateRef.current;
         if (cur.clients.length === 0 && cur.mothers.length === 0) {
           if (type === 'manual') setBackupMessage('No hay datos para copiar todavía.');
@@ -767,9 +773,12 @@
           try {
             const idxSnap = await db.ref('backupsIndex/' + uid).once('value');
             const idx = idxSnap.val() || {};
-            const latest = Object.entries(idx)
-              .map(([id, b]) => ({ id, createdAt: Number(b && b.createdAt) || 0 }))
-              .sort((a, b) => b.createdAt - a.createdAt)[0];
+            // Las copias "Antes de restaurar/importar" guardan una versión que TÚ reemplazaste,
+            // así que se prefieren las demás (la última versión real de tus datos)
+            const sorted = Object.entries(idx)
+              .map(([id, b]) => ({ id, createdAt: Number(b && b.createdAt) || 0, note: String((b && b.note) || '') }))
+              .sort((a, b) => b.createdAt - a.createdAt);
+            const latest = sorted.find(b => !b.note.startsWith('Antes de')) || sorted[0];
             if (latest) {
               const bSnap = await db.ref(`backups/${uid}/${latest.id}`).once('value');
               const d = bSnap.val();
