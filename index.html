@@ -65,6 +65,17 @@
       appId: '1:135474261402:web:1511bbef09bb2c20669e23'
     };
     const LEGACY_DATA_PATH = 'costeplay_vip_data';
+
+    // =====================================================================
+    // CORREOS DE GOOGLE QUE PUEDEN ENTRAR A COSTEPLAY
+    // Para dar acceso a otra persona, agrega su correo aquí Y en las Reglas de Firebase
+    // (las reglas se generan solas: botón de la nube → "Copiar reglas").
+    // =====================================================================
+    const ALLOWED_EMAILS = [
+      'josejchavez18@gmail.com'
+    ].map(e => e.trim().toLowerCase());
+
+    const isAllowedUser = (user) => Boolean(user && user.email && ALLOWED_EMAILS.includes(String(user.email).trim().toLowerCase()));
     const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
     // Los datos SOLO se guardan en la cuenta de Google (Firebase). Esta función borra
@@ -721,7 +732,7 @@
 
       // ---------- SINCRONIZACIÓN EN VIVO CON LA CUENTA DE GOOGLE ----------
       useEffect(() => {
-        if (!fbReady || !authUser) {
+        if (!fbReady || !authUser || !isAllowedUser(authUser)) {
           userRefRef.current = null;
           uidRef.current = null;
           pendingRef.current = 0;
@@ -1134,7 +1145,24 @@
               {signingIn ? 'Abriendo Google…' : 'Continuar con Google'}
             </button>
             {authError && <p className="mt-3 text-xs text-[#ff6b81] font-semibold leading-relaxed">{authError}</p>}
-            <p className="mt-5 text-[11px] text-zinc-500">Cada cuenta de Google ve únicamente sus propios datos.</p>
+            <p className="mt-5 text-[11px] text-zinc-500">Acceso solo para cuentas autorizadas.</p>
+          </AuthShell>
+        );
+      }
+
+      // Cuenta de Google que no está en la lista de correos permitidos
+      if (!isAllowedUser(authUser)) {
+        return (
+          <AuthShell>
+            <p className="text-sm text-red-300 font-bold">🔒 Esta cuenta no tiene acceso a CostePlay</p>
+            <p className="text-xs text-zinc-400 mt-2">{authUser.email}</p>
+            <p className="text-xs text-zinc-500 mt-3 leading-relaxed">Si crees que es un error, pide al administrador que agregue este correo.</p>
+            <button
+              onClick={signOut}
+              className="mt-5 w-full flex items-center justify-center gap-3 py-3 rounded-xl font-bold text-zinc-900 bg-white hover:bg-zinc-100 cursor-pointer"
+            >
+              <GoogleIcon /> Entrar con otra cuenta
+            </button>
           </AuthShell>
         );
       }
@@ -2169,28 +2197,31 @@
       );
     }
 
+    // Reglas de Firebase generadas a partir de ALLOWED_EMAILS
+    const ALLOWED_RULE = '(' + ALLOWED_EMAILS.map(e => `auth.token.email === '${e}'`).join(' || ') + ')';
+    const OWNER_RULE = `auth != null && auth.uid === $uid && auth.token.email_verified === true && ${ALLOWED_RULE}`;
     const FIREBASE_RULES_TEXT = `{
   "rules": {
     "users": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "${OWNER_RULE}",
+        ".write": "${OWNER_RULE}"
       }
     },
     "backups": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "${OWNER_RULE}",
+        ".write": "${OWNER_RULE}"
       }
     },
     "backupsIndex": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "${OWNER_RULE}",
+        ".write": "${OWNER_RULE}"
       }
     },
     "costeplay_vip_data": {
-      ".read": "auth != null && auth.token.email === 'TU_CORREO@gmail.com'",
+      ".read": "auth != null && auth.token.email_verified === true && ${ALLOWED_RULE}",
       ".write": false
     }
   }
@@ -2275,7 +2306,7 @@
         } catch (err) {
           const denied = String((err && (err.code || err.message)) || '').toUpperCase().includes('PERMISSION');
           setMsg(denied
-            ? 'Las reglas de Firebase no permiten leer la base antigua con esta cuenta. Pon tu correo en la regla "costeplay_vip_data" (ver Estado de la Nube) o usa tu archivo de respaldo.'
+            ? 'Firebase no permitió leer la base antigua. Copia y publica las reglas nuevas (botón de la nube → "Copiar reglas") o usa tu archivo de respaldo.'
             : ((err && err.message) || 'No se pudo leer la nube antigua.'));
         }
         setBusy('');
