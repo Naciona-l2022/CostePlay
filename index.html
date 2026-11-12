@@ -1,0 +1,2765 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CostePlay VIP • By Jose Chaves</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDK (App + Auth con Google + Realtime Database) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <!-- React & ReactDOM (versiones fijas para que no se rompa con actualizaciones) -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+  <style>
+    body {
+      background-color: #070709;
+      color: #f4f4f5;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #0b0b0f; }
+    ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #d4af37; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#D4AF37;font-family:sans-serif;font-weight:bold;">
+      Cargando CostePlay VIP...
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('error', function(e) {
+      var rootEl = document.getElementById('root');
+      if (rootEl && rootEl.innerText.indexOf('Cargando CostePlay') !== -1) {
+        rootEl.innerHTML = '<div style="padding:30px;color:#fff;font-family:sans-serif;max-width:520px;margin:40px auto;background:#16070b;border:2px solid #ff1744;border-radius:16px;">' +
+          '<h2 style="color:#ff1744;margin-top:0;">⚠️ Error en la carga del script</h2>' +
+          '<p style="font-size:14px;line-height:1.5;">Verifica que el archivo index.html se haya guardado completo en UTF-8.</p>' +
+          '<p style="font-size:12px;color:#fca5a5;">Detalle técnico: ' + (e.message || 'Error de sintaxis') + '</p></div>';
+      }
+    });
+  </script>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+    // =====================================================================
+    // CONFIGURACIÓN FIREBASE (proyecto costeplay-749e5)
+    // Para el login con Google hace falta la "apiKey" de tu proyecto.
+    // Puedes pegarla aquí abajo, o pegarla desde la propia página la primera vez
+    // (se guarda en este navegador).
+    // =====================================================================
+    const FIREBASE_CONFIG = {
+      apiKey: 'AIzaSyAAdhHRz62Y-T2uBvOOojGHdS1cm0rfLyA',
+      authDomain: 'costeplay-749e5.firebaseapp.com',
+      databaseURL: 'https://costeplay-749e5-default-rtdb.firebaseio.com',
+      projectId: 'costeplay-749e5',
+      storageBucket: 'costeplay-749e5.firebasestorage.app',
+      messagingSenderId: '135474261402',
+      appId: '1:135474261402:web:1511bbef09bb2c20669e23'
+    };
+    const LEGACY_DATA_PATH = 'costeplay_vip_data';
+    const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+    // Los datos SOLO se guardan en la cuenta de Google (Firebase). Esta función borra
+    // restos que versiones anteriores de esta página dejaron en el navegador.
+    const cleanupOldBrowserData = () => {
+      try {
+        const ls = window.localStorage;
+        const remove = [];
+        for (let i = 0; i < ls.length; i++) {
+          const k = ls.key(i);
+          if (k && (k.startsWith('cp_cache_') || k.startsWith('cp_pending_') || k === 'cp_firebase_config' || k === 'cp_hide_money')) remove.push(k);
+        }
+        remove.forEach(k => ls.removeItem(k));
+      } catch {}
+    };
+
+    const todayISO = () => {
+      const t = new Date();
+      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    };
+
+    const isValidISODate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T00:00:00').getTime());
+
+    // Las llaves de Firebase no aceptan . # $ [ ] /
+    const safeKey = (id) => String(id || '').replace(/[.#$\[\]\/]/g, '_');
+    const newId = (prefix) => prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+
+    const PLATFORMS = [
+      { id: 'ALL', name: 'Todas', color: '#D4AF37', bgGlow: 'rgba(212,175,55,0.15)', maxProfiles: 5 },
+      { id: 'NETFLIX', name: 'Netflix', color: '#E50914', bgGlow: 'rgba(229,9,20,0.18)', maxProfiles: 5 },
+      { id: 'DISNEY', name: 'Disney+', color: '#0063E5', bgGlow: 'rgba(0,99,229,0.20)', maxProfiles: 7 },
+      { id: 'HBOMAX', name: 'HBO Max', color: '#991EEB', bgGlow: 'rgba(153,30,235,0.20)', maxProfiles: 5 },
+      { id: 'PRIME', name: 'Prime Video', color: '#00A8E1', bgGlow: 'rgba(0,168,225,0.18)', maxProfiles: 6 },
+      { id: 'PARAMOUNT', name: 'Paramount+', color: '#0064FF', bgGlow: 'rgba(0,100,255,0.20)', maxProfiles: 6 },
+      { id: 'SPOTIFY', name: 'Spotify', color: '#1DB954', bgGlow: 'rgba(29,185,84,0.18)', maxProfiles: 6 },
+      { id: 'CRUNCHYROLL', name: 'Crunchyroll', color: '#F47521', bgGlow: 'rgba(244,117,33,0.18)', maxProfiles: 5 },
+      { id: 'VIX', name: 'ViX', color: '#FF5A00', bgGlow: 'rgba(255,90,0,0.18)', maxProfiles: 5 },
+      { id: 'YOUTUBE', name: 'YouTube Premium', color: '#FF0000', bgGlow: 'rgba(255,0,0,0.18)', maxProfiles: 5 },
+    ];
+
+    const sanitizeClient = (c, idx = 0) => {
+      if (!c || typeof c !== 'object') return null;
+      const dueStr = isValidISODate(c.dueDate) ? c.dueDate : todayISO();
+      const dayFromDue = Number(dueStr.split('-')[2]) || 1;
+      const day = Math.max(1, Math.min(31, Number(c.billingDay) || dayFromDue));
+      return {
+        id: safeKey(c.id || ('c_' + idx + '_' + String(c.name || '').replace(/\W/g, '').slice(0, 12) + '_' + dueStr.replace(/-/g, ''))),
+        name: String(c.name || 'Cliente').trim(),
+        phone: String(c.phone || '57').trim(),
+        platform: PLATFORMS.some(p => p.id === c.platform && p.id !== 'ALL') ? c.platform : 'NETFLIX',
+        accountEmail: String(c.accountEmail || '').trim(),
+        profileName: String(c.profileName || 'Perfil 1'),
+        pin: String(c.pin || ''),
+        billingDay: day,
+        dueDate: dueStr,
+        price: String(c.price !== undefined && c.price !== null ? c.price : '').replace(/\D/g, ''),
+        isHouseholdHead: Boolean(c.isHouseholdHead),
+        codeStatus: ['OK', 'SENT', 'TRANSFER'].includes(c.codeStatus) ? c.codeStatus : 'OK',
+        createdAt: Number(c.createdAt) || 0
+      };
+    };
+
+    const sanitizeMother = (m, idx = 0) => {
+      if (!m || typeof m !== 'object') return null;
+      const renStr = isValidISODate(m.renewalDate) ? m.renewalDate : todayISO();
+      const dayFromRen = Number(renStr.split('-')[2]) || 1;
+      return {
+        id: safeKey(m.id || ('m_' + idx + '_' + String(m.email || '').replace(/\W/g, '').slice(0, 16))),
+        platform: PLATFORMS.some(p => p.id === m.platform && p.id !== 'ALL') ? m.platform : 'NETFLIX',
+        email: String(m.email || '').trim(),
+        password: String(m.password || ''),
+        billingDay: Math.max(1, Math.min(31, Number(m.billingDay) || dayFromRen)),
+        renewalDate: renStr,
+        maxProfiles: Math.max(1, Math.min(20, Number(m.maxProfiles) || 5)),
+        cost: m.cost !== undefined && m.cost !== null ? String(m.cost).replace(/\D/g, '') : '',
+        createdAt: Number(m.createdAt) || 0
+      };
+    };
+
+    // Acepta arreglo u objeto {id: item}; elimina ids repetidos (se queda con el último)
+    const toList = (raw, sanitizer) => {
+      const arr = Array.isArray(raw)
+        ? raw
+        : (raw && typeof raw === 'object'
+          ? Object.entries(raw).map(([key, item]) => (item && typeof item === 'object' && !item.id ? { ...item, id: key } : item))
+          : []);
+      const seen = new Map();
+      arr.forEach((item, idx) => {
+        const clean = sanitizer(item, idx);
+        if (clean) seen.set(clean.id, clean);
+      });
+      return Array.from(seen.values());
+    };
+    const sanitizeClientList = (raw) => toList(raw, sanitizeClient);
+    const sanitizeMotherList = (raw) => toList(raw, sanitizeMother);
+
+    const listToMap = (list) => {
+      const out = {};
+      (list || []).forEach(item => { out[item.id] = item; });
+      return out;
+    };
+
+    const sameItem = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+    // Calcula SOLO lo que cambió (por cliente/cuenta) para no pisar cambios hechos en otro dispositivo
+    const diffCollection = (path, prevList, nextList, updates) => {
+      const prevMap = listToMap(prevList);
+      const nextMap = listToMap(nextList);
+      Object.keys(prevMap).forEach(id => { if (!nextMap[id]) updates[`${path}/${id}`] = null; });
+      Object.keys(nextMap).forEach(id => { if (!prevMap[id] || !sameItem(prevMap[id], nextMap[id])) updates[`${path}/${id}`] = nextMap[id]; });
+      return updates;
+    };
+
+    const normalizePhoneForWhatsApp = (phone) => {
+      const digits = String(phone || '').replace(/\D/g, '');
+      if (digits.length === 10 && digits.startsWith('3')) return '57' + digits; // celular colombiano sin indicativo
+      return digits;
+    };
+
+    const copyToClipboard = async (text) => {
+      const value = String(text || '');
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(value);
+          return true;
+        }
+      } catch {}
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch { return false; }
+    };
+
+    const downloadJSON = (obj, filename) => {
+      const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    };
+
+    const authErrorMessage = (err) => {
+      const code = (err && err.code) || '';
+      const map = {
+        'auth/popup-closed-by-user': 'Cerraste la ventana de Google antes de terminar.',
+        'auth/cancelled-popup-request': 'Se canceló el inicio de sesión. Intenta otra vez.',
+        'auth/popup-blocked': 'El navegador bloqueó la ventana de Google. Te redirigimos…',
+        'auth/unauthorized-domain': 'Este dominio no está autorizado en Firebase. Agrégalo en Firebase → Authentication → Settings → Authorized domains.',
+        'auth/operation-not-allowed': 'El acceso con Google no está activado. Actívalo en Firebase → Authentication → Sign-in method → Google.',
+        'auth/operation-not-supported-in-this-environment': 'Google no permite iniciar sesión abriendo el archivo directo (file://). Ábrelo con Live Server o desde Firebase Hosting.',
+        'auth/invalid-api-key': 'La apiKey no es válida. Vuelve a pegar la configuración de Firebase.',
+        'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'La apiKey no es válida. Vuelve a pegar la configuración de Firebase.',
+        'auth/network-request-failed': 'Sin conexión a internet. Revisa tu red e intenta de nuevo.'
+      };
+      return map[code] || (err && err.message) || 'No se pudo iniciar sesión.';
+    };
+
+    const buildDateForDay = (year, monthIndex0, billingDay) => {
+      const y = Number(year) || 2026;
+      const m0 = Number(monthIndex0) || 0;
+      const maxDaysInMonth = new Date(y, m0 + 1, 0).getDate();
+      const clampedDay = Math.max(1, Math.min(Number(billingDay) || 1, maxDaysInMonth));
+      return `${y}-${String(m0 + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+    };
+
+    const getNextMonthSameDay = (currentDueDateStr, billingDay) => {
+      const today = new Date();
+      let y = today.getFullYear();
+      let m = today.getMonth() + 1;
+      let d = Number(billingDay) || today.getDate();
+
+      if (currentDueDateStr && typeof currentDueDateStr === 'string') {
+        const parts = currentDueDateStr.split('-').map(Number);
+        if (parts.length === 3 && parts[0] > 2000) {
+          y = parts[0];
+          m = parts[1];
+          if (!billingDay) d = parts[2];
+        }
+      }
+
+      let nextMonth = m + 1;
+      let nextYear = y;
+      if (nextMonth > 12) {
+        nextMonth = 1;
+        nextYear += 1;
+      }
+
+      const maxDays = new Date(nextYear, nextMonth, 0).getDate();
+      const finalDay = Math.max(1, Math.min(d || 1, maxDays));
+      return `${nextYear}-${String(nextMonth).padStart(2, '0')}-${String(finalDay).padStart(2, '0')}`;
+    };
+
+    const getNextMonthLabel = (currentDueDateStr, billingDay) => {
+      const nextStr = getNextMonthSameDay(currentDueDateStr, billingDay);
+      const parts = nextStr.split('-').map(Number);
+      const m = parts[1] || 1;
+      const d = parts[2] || 1;
+      return `${d} de ${MONTHS_ES[m - 1] || 'ene'}`;
+    };
+
+    const PlatformLogo = ({ platformId, size = 28 }) => {
+      switch (platformId) {
+        case 'NETFLIX':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#0B0B0E" stroke="#E50914" strokeWidth="2" />
+              <path d="M18 12H27V52H18V12Z" fill="#B1060F" />
+              <path d="M37 12H46V52H37V12Z" fill="#B1060F" />
+              <path d="M18 12H27L46 52H37L18 12Z" fill="#E50914" />
+            </svg>
+          );
+        case 'DISNEY':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#001E62" stroke="#3898FF" strokeWidth="1.5" />
+              <path d="M14 26 Q32 8 50 24" fill="none" stroke="#66B2FF" strokeWidth="2.2" strokeLinecap="round" />
+              <text x="13" y="46" fill="#FFFFFF" fontWeight="900" fontSize="24" fontFamily="sans-serif">D</text>
+              <path d="M44 29V43M37 36H51" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" />
+            </svg>
+          );
+        case 'HBOMAX':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#3B096C" stroke="#B388FF" strokeWidth="1.5" />
+              <text x="8" y="30" fill="#FFFFFF" fontWeight="900" fontSize="14" fontFamily="sans-serif">HBO</text>
+              <text x="8" y="48" fill="#E1BEE7" fontWeight="800" fontSize="17" fontFamily="sans-serif">max</text>
+              <circle cx="49" cy="24" r="6" fill="none" stroke="#FFFFFF" strokeWidth="3" />
+            </svg>
+          );
+        case 'PRIME':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#0F171E" stroke="#00A8E1" strokeWidth="2" />
+              <text x="9" y="34" fill="#FFFFFF" fontWeight="900" fontSize="16" fontFamily="sans-serif">prime</text>
+              <path d="M14 43 Q32 53 50 42" fill="none" stroke="#00A8E1" strokeWidth="3.5" strokeLinecap="round" />
+            </svg>
+          );
+        case 'PARAMOUNT':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#003380" stroke="#3385FF" strokeWidth="1.8" />
+              <polygon points="32,16 14,48 50,48" fill="#FFFFFF" opacity="0.92" />
+            </svg>
+          );
+        case 'SPOTIFY':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#0B140E" stroke="#1DB954" strokeWidth="2" />
+              <circle cx="32" cy="32" r="20" fill="#1DB954" />
+              <path d="M21 26 Q32 22 43 27" fill="none" stroke="#000" strokeWidth="3.5" strokeLinecap="round" />
+              <path d="M23 33 Q32 30 41 34" fill="none" stroke="#000" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+          );
+        case 'CRUNCHYROLL':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#170E07" stroke="#F47521" strokeWidth="2" />
+              <circle cx="32" cy="32" r="19" fill="#F47521" />
+              <circle cx="35" cy="34" r="13" fill="#170E07" />
+              <circle cx="39" cy="31" r="6" fill="#FFFFFF" />
+            </svg>
+          );
+        case 'VIX':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#FF5A00" />
+              <text x="10" y="42" fill="#FFFFFF" fontWeight="900" fontSize="25" fontFamily="sans-serif">ViX</text>
+            </svg>
+          );
+        case 'YOUTUBE':
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#140707" stroke="#FF0000" strokeWidth="2" />
+              <rect x="11" y="17" width="42" height="30" rx="9" fill="#FF0000" />
+              <polygon points="28,25 28,39 40,32" fill="#FFFFFF" />
+            </svg>
+          );
+        default:
+          return (
+            <svg viewBox="0 0 64 64" style={{ width: size, height: size }} className="shrink-0 rounded-lg shadow-md">
+              <rect width="64" height="64" rx="14" fill="#141108" stroke="#D4AF37" strokeWidth="2" />
+              <path d="M18 42 L22 22 L32 32 L42 22 L46 42 Z" fill="#D4AF37" />
+            </svg>
+          );
+      }
+    };
+
+    const CostePlayLogo = ({ size = 56 }) => (
+      <div className="relative inline-flex items-center justify-center select-none" style={{ width: size, height: size }}>
+        <svg viewBox="0 0 120 120" className="w-full h-full drop-shadow-[0_0_15px_rgba(212,175,55,0.45)]">
+          <defs>
+            <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#FFF3B0" />
+              <stop offset="35%" stopColor="#D4AF37" />
+              <stop offset="70%" stopColor="#AA771C" />
+              <stop offset="100%" stopColor="#F3E5AB" />
+            </linearGradient>
+            <linearGradient id="goldBright" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#FFFFFF" />
+              <stop offset="25%" stopColor="#FFE885" />
+              <stop offset="100%" stopColor="#B38728" />
+            </linearGradient>
+          </defs>
+          <path d="M38 24 L46 10 L58 20 L70 8 L78 24 Z" fill="url(#goldBright)" stroke="#FFF3B0" strokeWidth="1.5" />
+          <circle cx="46" cy="8" r="2.5" fill="#FFF3B0" />
+          <circle cx="70" cy="6" r="2.5" fill="#FFF3B0" />
+          <path d="M88 40 A36 36 0 1 0 88 88 L75 78 A21 21 0 1 1 75 50 Z" fill="url(#goldGrad)" stroke="#FFF3B0" strokeWidth="1.5" />
+          <polygon points="54,47 54,81 82,64" fill="url(#goldBright)" stroke="#111" strokeWidth="1.5" />
+        </svg>
+      </div>
+    );
+
+    const DEFAULT_REMINDER_TEMPLATE = [
+      "🎬 MENSAJE {plataforma}",
+      "",
+      "🎉 ¡Hola {cliente}! Esperamos que estés súper bien 🎉",
+      "",
+      "📅 Hoy ({dia_corte} del mes) corresponde el pago de tu cuenta {plataforma} 🍿",
+      "💰 Valor a pagar: $" + "{valor}",
+      "Gracias por seguir disfrutando con nosotros de tus series y películas favoritas.",
+      "",
+      "✅ Mantén tu cuenta al día para evitar interrupciones y seguir en modo maratón 🔥",
+      "",
+      "📩 Si ya realizaste el pago, ¡mil gracias por tu puntualidad!",
+      "Si aún no, te invitamos a hacerlo lo antes posible 🙌",
+      "",
+      "💳 Datos de pago:",
+      "",
+      "Nequi: 3008119200",
+      "",
+      "🔑 Llaves:",
+      "Nequi: @3008119200",
+      "",
+      "🎬 ¡Que disfrutes tu contenido al máximo!"
+    ].join("\n");
+
+    // ---------- COPIAS DE SEGURIDAD ----------
+    const AUTO_BACKUP_EVERY_MS = 10 * 60 * 1000; // cada 10 minutos
+    const AUTO_BACKUPS_TO_KEEP = 48;             // últimas 8 horas de copias automáticas
+    const MANUAL_BACKUPS_TO_KEEP = 30;
+
+    // Huella de los datos para no repetir copias idénticas
+    const hashData = (data) => {
+      const sortById = (list) => [...(list || [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const str = JSON.stringify([sortById(data.clients), sortById(data.mothers), data.reminderTemplate || '']);
+      let h1 = 5381, h2 = 52711;
+      for (let i = 0; i < str.length; i++) {
+        const ch = str.charCodeAt(i);
+        h1 = (h1 * 33) ^ ch;
+        h2 = (h2 * 33) ^ ch;
+      }
+      return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + '_' + str.length;
+    };
+
+    const formatDateTime = (ms) => {
+      if (!ms) return '';
+      return new Date(ms).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    };
+
+    const nowTimeLabel = () => new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    function App() {
+      // ---------- AUTENTICACIÓN CON GOOGLE ----------
+      const [fbReady, setFbReady] = useState(false);
+      const [fbInitError, setFbInitError] = useState('');
+      const [authUser, setAuthUser] = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+      const [authError, setAuthError] = useState('');
+      const [signingIn, setSigningIn] = useState(false);
+
+      const [hideMoney, setHideMoney] = useState(false);
+      const [showFinanceBreakdown, setShowFinanceBreakdown] = useState(false);
+      const [isCostModalOpen, setIsCostModalOpen] = useState(false);
+
+      // ---------- DATOS (solo en la nube, ligados a la cuenta de Google) ----------
+      const [clients, setClients] = useState([]);
+      const [mothers, setMothers] = useState([]);
+      const [reminderTemplate, setReminderTemplate] = useState(DEFAULT_REMINDER_TEMPLATE);
+      const [serverLoaded, setServerLoaded] = useState(false);
+      const [slowLoading, setSlowLoading] = useState(false);
+      const [needsMigration, setNeedsMigration] = useState(false);
+      const [manualMigrationOpen, setManualMigrationOpen] = useState(false);
+
+      const [cloudStatus, setCloudStatus] = useState('CONNECTING'); // CONNECTING | CONNECTED | OFFLINE | ERROR
+      const [cloudError, setCloudError] = useState('');
+      const [saveIndicator, setSaveIndicator] = useState('IDLE');
+      const [lastSavedTime, setLastSavedTime] = useState('');
+      const [pendingCount, setPendingCount] = useState(0);
+      const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
+
+      // ---------- COPIAS DE SEGURIDAD ----------
+      const [backups, setBackups] = useState([]);
+      const [backupsLoaded, setBackupsLoaded] = useState(false);
+      const [backupBusy, setBackupBusy] = useState(false);
+      const [backupMessage, setBackupMessage] = useState('');
+
+      const userRefRef = useRef(null);
+      const uidRef = useRef(null);
+      const pendingRef = useRef(0);
+      const backupsRef = useRef([]);
+      const backupBusyRef = useRef(false);
+      const stateRef = useRef({ clients: [], mothers: [], reminderTemplate: DEFAULT_REMINDER_TEMPLATE });
+
+      // Inicializa Firebase + escucha la sesión de Google
+      useEffect(() => {
+        cleanupOldBrowserData();
+        if (!window.firebase || !window.firebase.auth || !window.firebase.database) {
+          setFbInitError('No se pudo cargar Firebase. Revisa tu conexión a internet y recarga la página.');
+          setAuthLoading(false);
+          return;
+        }
+        let unsubscribe = () => {};
+        try {
+          const app = window.firebase.apps.length ? window.firebase.app() : window.firebase.initializeApp(FIREBASE_CONFIG);
+          const auth = window.firebase.auth(app);
+          auth.useDeviceLanguage();
+          auth.setPersistence(window.firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+          auth.getRedirectResult().catch((err) => setAuthError(authErrorMessage(err)));
+          unsubscribe = auth.onAuthStateChanged((user) => {
+            setAuthUser(user || null);
+            setAuthLoading(false);
+            setSigningIn(false);
+          });
+          setFbReady(true);
+        } catch (err) {
+          setFbInitError(err.message || 'Error iniciando Firebase');
+          setAuthLoading(false);
+        }
+        return () => unsubscribe();
+      }, []);
+
+      const signInWithGoogle = async () => {
+        setAuthError('');
+        if (window.location.protocol === 'file:') {
+          setAuthError(authErrorMessage({ code: 'auth/operation-not-supported-in-this-environment' }));
+          return;
+        }
+        setSigningIn(true);
+        const auth = window.firebase.auth();
+        const provider = new window.firebase.auth.GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: 'select_account' });
+        try {
+          await auth.signInWithPopup(provider);
+        } catch (err) {
+          if (err && (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment')) {
+            try { await auth.signInWithRedirect(provider); return; } catch (err2) { setAuthError(authErrorMessage(err2)); }
+          } else {
+            setAuthError(authErrorMessage(err));
+          }
+          setSigningIn(false);
+        }
+      };
+
+      const signOut = async () => {
+        if (pendingRef.current > 0 && !window.confirm('Hay cambios que todavía se están subiendo a la nube. Si cierras sesión ahora se pueden perder. ¿Cerrar sesión de todas formas?')) return;
+        try { await window.firebase.auth().signOut(); } catch {}
+      };
+
+      // ---------- GUARDADO EN LA NUBE ----------
+      const changePending = (delta) => {
+        pendingRef.current = Math.max(0, pendingRef.current + delta);
+        setPendingCount(pendingRef.current);
+      };
+
+      const pushUpdates = (updates) => {
+        const ref = userRefRef.current;
+        const uid = uidRef.current;
+        if (!ref || !uid || Object.keys(updates).length === 0) return;
+        updates['meta/updatedAt'] = window.firebase.database.ServerValue.TIMESTAMP;
+        changePending(1);
+        setSaveIndicator('SAVING');
+        // Firebase aplica el cambio al instante en pantalla y lo sube en cuanto hay internet
+        ref.update(updates)
+          .then(() => {
+            if (uidRef.current !== uid) return;
+            changePending(-1);
+            setCloudStatus(prev => (prev === 'ERROR' ? 'CONNECTED' : prev));
+            if (pendingRef.current === 0) {
+              setSaveIndicator('SAVED');
+              setLastSavedTime(nowTimeLabel());
+              setCloudError('');
+            }
+          })
+          .catch((err) => {
+            if (uidRef.current !== uid) return;
+            changePending(-1);
+            const denied = String((err && (err.code || err.message)) || '').toUpperCase().includes('PERMISSION');
+            setSaveIndicator('ERROR');
+            setCloudError(denied
+              ? 'Firebase rechazó el guardado (permiso denegado). Revisa las Reglas de la base de datos (ver "Estado de la Nube").'
+              : ((err && err.message) || 'Error al guardar en Firebase'));
+          });
+      };
+
+      // Aplica un nuevo estado y sube SOLO las diferencias
+      const commit = (nextClients, nextMothers, nextTemplate, extraUpdates) => {
+        const prev = stateRef.current;
+        const next = {
+          clients: nextClients ? sanitizeClientList(nextClients) : prev.clients,
+          mothers: nextMothers ? sanitizeMotherList(nextMothers) : prev.mothers,
+          reminderTemplate: typeof nextTemplate === 'string' ? nextTemplate : prev.reminderTemplate
+        };
+        const updates = { ...(extraUpdates || {}) };
+        if (nextClients) diffCollection('clients', prev.clients, next.clients, updates);
+        if (nextMothers) diffCollection('mothers', prev.mothers, next.mothers, updates);
+        if (next.reminderTemplate !== prev.reminderTemplate) updates['settings/reminderTemplate'] = next.reminderTemplate;
+
+        stateRef.current = next;
+        setClients(next.clients);
+        setMothers(next.mothers);
+        setReminderTemplate(next.reminderTemplate);
+        pushUpdates(updates);
+      };
+
+      const syncClientsWithMothers = (clientList, motherList) => clientList.map(c => {
+        const cleanEmail = (c.accountEmail || '').trim().toLowerCase();
+        const matchedMother = motherList.find(m => (m.email || '').trim().toLowerCase() === cleanEmail);
+        return matchedMother ? { ...c, platform: matchedMother.platform, accountEmail: matchedMother.email.trim() } : c;
+      });
+
+      const updateClients = (updater) => {
+        const current = stateRef.current;
+        const rawNext = typeof updater === 'function' ? updater(current.clients) : updater;
+        commit(syncClientsWithMothers(sanitizeClientList(rawNext), current.mothers), null);
+      };
+
+      const updateMothers = (updater, clientsUpdater) => {
+        const current = stateRef.current;
+        const rawNext = typeof updater === 'function' ? updater(current.mothers) : updater;
+        const cleanMothers = sanitizeMotherList(rawNext);
+        const baseClients = clientsUpdater ? clientsUpdater(current.clients) : current.clients;
+        commit(syncClientsWithMothers(sanitizeClientList(baseClients), cleanMothers), cleanMothers);
+      };
+
+      const updateTemplate = (newTemp) => commit(null, null, String(newTemp || DEFAULT_REMINDER_TEMPLATE));
+
+      // Reemplaza TODO (importar respaldo / restaurar copia / migrar datos antiguos)
+      const replaceAllData = (c, m, t) => {
+        const cleanM = sanitizeMotherList(m);
+        const cleanC = syncClientsWithMothers(sanitizeClientList(c), cleanM);
+        commit(cleanC, cleanM, String(t || stateRef.current.reminderTemplate || DEFAULT_REMINDER_TEMPLATE), { 'meta/migrated': true });
+        setNeedsMigration(false);
+        setManualMigrationOpen(false);
+      };
+
+      // ---------- COPIAS DE SEGURIDAD EN LA CUENTA DE GOOGLE ----------
+      // Se guardan en Firebase en backups/{uid} (datos) y backupsIndex/{uid} (lista liviana)
+      const createBackup = async (type, note = '') => {
+        const uid = uidRef.current;
+        if (!uid || backupBusyRef.current) return false;
+        const cur = stateRef.current;
+        if (cur.clients.length === 0 && cur.mothers.length === 0) {
+          if (type === 'manual') setBackupMessage('No hay datos para copiar todavía.');
+          return false;
+        }
+        backupBusyRef.current = true;
+        setBackupBusy(true);
+        try {
+          const id = (type === 'auto' ? 'a_' : 'm_') + Date.now();
+          const updates = {};
+          updates[`backups/${uid}/${id}`] = {
+            clients: listToMap(cur.clients),
+            mothers: listToMap(cur.mothers),
+            reminderTemplate: cur.reminderTemplate
+          };
+          updates[`backupsIndex/${uid}/${id}`] = {
+            createdAt: window.firebase.database.ServerValue.TIMESTAMP,
+            type,
+            note: String(note || ''),
+            clients: cur.clients.length,
+            mothers: cur.mothers.length,
+            hash: hashData(cur)
+          };
+          // Borra las copias más viejas para no llenar la base de datos
+          const keep = type === 'auto' ? AUTO_BACKUPS_TO_KEEP : MANUAL_BACKUPS_TO_KEEP;
+          const sameType = backupsRef.current.filter(b => b.type === type).sort((a, b) => a.createdAt - b.createdAt);
+          const excess = sameType.length + 1 - keep;
+          for (let k = 0; k < excess; k++) {
+            updates[`backups/${uid}/${sameType[k].id}`] = null;
+            updates[`backupsIndex/${uid}/${sameType[k].id}`] = null;
+          }
+          await window.firebase.database().ref().update(updates);
+          if (type === 'manual') setBackupMessage(`✅ Copia creada (${cur.clients.length} clientes, ${cur.mothers.length} cuentas).`);
+          return true;
+        } catch (err) {
+          setBackupMessage('⚠️ No se pudo crear la copia: ' + ((err && err.message) || 'error desconocido'));
+          return false;
+        } finally {
+          backupBusyRef.current = false;
+          setBackupBusy(false);
+        }
+      };
+
+      const loadBackupData = async (id) => {
+        const snap = await window.firebase.database().ref(`backups/${uidRef.current}/${id}`).once('value');
+        const d = snap.val();
+        if (!d) throw new Error('La copia ya no existe.');
+        return {
+          clients: sanitizeClientList(d.clients),
+          mothers: sanitizeMotherList(d.mothers),
+          reminderTemplate: typeof d.reminderTemplate === 'string' ? d.reminderTemplate : ''
+        };
+      };
+
+      const restoreBackup = async (b) => {
+        const cur = stateRef.current;
+        if (!window.confirm(`¿Restaurar la copia del ${formatDateTime(b.createdAt)} (${b.clients} clientes, ${b.mothers} cuentas)?\n\nTus datos actuales (${cur.clients.length} clientes, ${cur.mothers.length} cuentas) se guardarán antes en una copia manual "Antes de restaurar", por si quieres volver.`)) return;
+        try {
+          const data = await loadBackupData(b.id);
+          const hasCurrent = cur.clients.length > 0 || cur.mothers.length > 0;
+          if (hasCurrent && !(await createBackup('manual', 'Antes de restaurar')) &&
+              !window.confirm('No se pudo guardar la copia previa de tus datos actuales. ¿Restaurar de todos modos?')) return;
+          replaceAllData(data.clients, data.mothers, data.reminderTemplate);
+          setBackupMessage(`✅ Copia del ${formatDateTime(b.createdAt)} restaurada.`);
+        } catch (err) {
+          setBackupMessage('⚠️ No se pudo restaurar: ' + ((err && err.message) || 'error'));
+        }
+      };
+
+      const downloadCloudBackup = async (b) => {
+        try {
+          const data = await loadBackupData(b.id);
+          downloadJSON({
+            app: 'CostePlay VIP',
+            backupOf: new Date(b.createdAt).toISOString(),
+            account: authUser ? authUser.email : '',
+            ...data
+          }, `Respaldo_CostePlay_${new Date(b.createdAt).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`);
+        } catch (err) {
+          setBackupMessage('⚠️ No se pudo descargar: ' + ((err && err.message) || 'error'));
+        }
+      };
+
+      const deleteBackup = async (b) => {
+        if (!window.confirm(`¿Borrar la copia del ${formatDateTime(b.createdAt)}? No se puede deshacer.`)) return;
+        const uid = uidRef.current;
+        try {
+          await window.firebase.database().ref().update({ [`backups/${uid}/${b.id}`]: null, [`backupsIndex/${uid}/${b.id}`]: null });
+        } catch (err) {
+          setBackupMessage('⚠️ No se pudo borrar: ' + ((err && err.message) || 'error'));
+        }
+      };
+
+      // ---------- SINCRONIZACIÓN EN VIVO CON LA CUENTA DE GOOGLE ----------
+      useEffect(() => {
+        if (!fbReady || !authUser) {
+          userRefRef.current = null;
+          uidRef.current = null;
+          pendingRef.current = 0;
+          backupsRef.current = [];
+          stateRef.current = { clients: [], mothers: [], reminderTemplate: DEFAULT_REMINDER_TEMPLATE };
+          setClients([]); setMothers([]); setReminderTemplate(DEFAULT_REMINDER_TEMPLATE);
+          setServerLoaded(false); setSlowLoading(false); setNeedsMigration(false); setManualMigrationOpen(false);
+          setPendingCount(0); setSaveIndicator('IDLE'); setLastSavedTime('');
+          setBackups([]); setBackupsLoaded(false); setBackupMessage('');
+          return;
+        }
+
+        const uid = authUser.uid;
+        const db = window.firebase.database();
+        const ref = db.ref('users/' + uid);
+        userRefRef.current = ref;
+        uidRef.current = uid;
+        setCloudStatus('CONNECTING');
+        setCloudError('');
+
+        ref.child('profile').update({
+          email: authUser.email || '',
+          name: authUser.displayName || '',
+          lastLogin: window.firebase.database.ServerValue.TIMESTAMP
+        }).catch(() => {});
+
+        const handleValue = (snapshot) => {
+          const data = snapshot.val() || {};
+          const c = sanitizeClientList(data.clients);
+          const m = sanitizeMotherList(data.mothers);
+          const t = (data.settings && typeof data.settings.reminderTemplate === 'string' && data.settings.reminderTemplate) || DEFAULT_REMINDER_TEMPLATE;
+          stateRef.current = { clients: c, mothers: m, reminderTemplate: t };
+          setClients(c); setMothers(m); setReminderTemplate(t);
+          setServerLoaded(true);
+          setCloudStatus(prev => (prev === 'ERROR' ? 'CONNECTED' : prev));
+          setNeedsMigration(c.length === 0 && m.length === 0 && !(data.meta && data.meta.migrated));
+        };
+        const handleError = (err) => {
+          setCloudStatus('ERROR');
+          setCloudError((err && err.message) || 'No se pudo leer la base de datos. Revisa las Reglas de Firebase.');
+        };
+        ref.on('value', handleValue, handleError);
+
+        const idxRef = db.ref('backupsIndex/' + uid);
+        const handleIndex = (snap) => {
+          const raw = snap.val() || {};
+          const list = Object.entries(raw)
+            .map(([id, b]) => ({ id, ...(b || {}), createdAt: Number(b && b.createdAt) || 0 }))
+            .sort((a, b) => b.createdAt - a.createdAt);
+          backupsRef.current = list;
+          setBackups(list);
+          setBackupsLoaded(true);
+        };
+        idxRef.on('value', handleIndex, () => setBackupsLoaded(true));
+
+        const connRef = db.ref('.info/connected');
+        const handleConn = (snap) => setCloudStatus(prev => (snap.val() === true ? (prev === 'ERROR' ? 'ERROR' : 'CONNECTED') : (prev === 'ERROR' ? 'ERROR' : 'OFFLINE')));
+        connRef.on('value', handleConn);
+
+        const slowTimer = setTimeout(() => setSlowLoading(true), 8000);
+
+        return () => {
+          clearTimeout(slowTimer);
+          ref.off('value', handleValue);
+          idxRef.off('value', handleIndex);
+          connRef.off('value', handleConn);
+        };
+      }, [fbReady, authUser]);
+
+      // Copia automática: revisa cada minuto; crea una si pasaron 10 min y los datos cambiaron
+      useEffect(() => {
+        if (!authUser || !serverLoaded || !backupsLoaded) return;
+        const tick = () => {
+          const cur = stateRef.current;
+          if (cur.clients.length === 0 && cur.mothers.length === 0) return;
+          const list = backupsRef.current;
+          const lastAuto = list.find(b => b.type === 'auto');
+          if (lastAuto && Date.now() - lastAuto.createdAt < AUTO_BACKUP_EVERY_MS) return;
+          if (list[0] && list[0].hash === hashData(cur)) return; // nada cambió desde la última copia
+          createBackup('auto');
+        };
+        const first = setTimeout(tick, 15000);
+        const interval = setInterval(tick, 60000);
+        return () => { clearTimeout(first); clearInterval(interval); };
+      }, [authUser, serverLoaded, backupsLoaded]);
+
+      // Avisa antes de cerrar la pestaña si hay cambios subiéndose
+      useEffect(() => {
+        const handler = (e) => {
+          if (pendingRef.current > 0) { e.preventDefault(); e.returnValue = ''; }
+        };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+      }, []);
+
+      const [selectedPlatform, setSelectedPlatform] = useState('ALL');
+      const [activeTab, setActiveTab] = useState('CLIENTS');
+      const [statusFilter, setStatusFilter] = useState('ALL');
+      const [motherFilter, setMotherFilter] = useState('ALL');
+      const [searchQuery, setSearchQuery] = useState('');
+      const [copiedId, setCopiedId] = useState(null);
+
+      const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+      const [editingClient, setEditingClient] = useState(null);
+      const [prefilledSlot, setPrefilledSlot] = useState(null);
+      const [isMotherModalOpen, setIsMotherModalOpen] = useState(false);
+      const [editingMother, setEditingMother] = useState(null);
+      const [isBulkMotherModalOpen, setIsBulkMotherModalOpen] = useState(false);
+      const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+      const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+      const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+
+      const getDaysDiff = (dateStr) => {
+        if (!dateStr || typeof dateStr !== 'string') return 0;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const target = new Date(dateStr + 'T00:00:00');
+        if (isNaN(target.getTime())) return 0;
+        return Math.round((target - today) / (1000 * 60 * 60 * 24));
+      };
+
+      const parseNum = (val) => Number(String(val || '').replace(/\D/g, '')) || 0;
+
+      const formatCurrency = (val) => {
+        const num = parseNum(val);
+        return num.toLocaleString('es-CO');
+      };
+
+      const formatMoneyDisplay = (val) => {
+        if (hideMoney) return '••••••';
+        const num = Number(val) || 0;
+        const prefix = num < 0 ? '-$' : '$';
+        return prefix + Math.abs(num).toLocaleString('es-CO');
+      };
+
+      const formatDateEs = (dateStr) => {
+        if (!dateStr || typeof dateStr !== 'string') return '';
+        const parts = dateStr.split('-');
+        if (parts.length !== 3) return dateStr;
+        const [y, m, d] = parts;
+        const mIdx = (parseInt(m, 10) || 1) - 1;
+        return `${parseInt(d, 10) || 1} ${MONTHS_ES[mIdx] || 'ene'} ${y}`;
+      };
+
+      const copyText = async (text, id) => {
+        const ok = await copyToClipboard(text);
+        if (!ok) { window.prompt('Copia el texto manualmente:', String(text || '')); return; }
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 1800);
+      };
+
+      const buildReminderMessage = (client) => {
+        const platObj = PLATFORMS.find(p => p.id === client.platform);
+        const platNameUpper = (platObj ? platObj.name : client.platform).toUpperCase();
+        const fixedDay = client.billingDay || 10;
+
+        // Se usan funciones de reemplazo para que caracteres como "$" en los datos no rompan el mensaje
+        const values = {
+          cliente: client.name || '',
+          plataforma: platNameUpper,
+          correo: client.accountEmail || '',
+          perfil: client.profileName || 'Asignado',
+          pin: client.pin || 'Sin PIN',
+          vencimiento: formatDateEs(client.dueDate),
+          dia_corte: `día ${fixedDay}`,
+          valor: formatCurrency(client.price)
+        };
+        return String(reminderTemplate || DEFAULT_REMINDER_TEMPLATE)
+          .replace(/\{(cliente|plataforma|correo|perfil|pin|vencimiento|dia_corte|valor)\}/g, (_, key) => values[key]);
+      };
+
+      const sendWhatsAppReminder = (client) => {
+        const msg = buildReminderMessage(client);
+        const cleanPhone = normalizePhoneForWhatsApp(client.phone);
+        if (cleanPhone.length < 10) {
+          alert(`El número de WhatsApp de ${client.name} no es válido. Edítalo e incluye el indicativo (57...).`);
+          return;
+        }
+        window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener');
+      };
+
+      const markMonthPaid = (client) => {
+        const fixedDay = client.billingDay || 10;
+        const nextDate = getNextMonthSameDay(client.dueDate, fixedDay);
+        updateClients(prev => prev.map(c => c.id === client.id ? { ...c, billingDay: fixedDay, dueDate: nextDate } : c));
+      };
+
+      const markMotherRenewed = (mother) => {
+        const fixedDay = mother.billingDay || 15;
+        const nextDate = getNextMonthSameDay(mother.renewalDate, fixedDay);
+        updateMothers(prev => prev.map(m => m.id === mother.id ? { ...m, billingDay: fixedDay, renewalDate: nextDate } : m));
+      };
+
+      // --- MOTOR FINANCIERO VIP (CAJA REGISTRADORA EN VIVO) ---
+      const stats = useMemo(() => {
+        const baseClients = selectedPlatform === 'ALL' ? clients : clients.filter(c => c.platform === selectedPlatform);
+        const baseMothers = selectedPlatform === 'ALL' ? mothers : mothers.filter(m => m.platform === selectedPlatform);
+
+        let active = 0, expiring = 0, expired = 0, codeIssues = 0;
+        let totalMonthlyCOP = 0, collectedCOP = 0, expiredMoneyCOP = 0, expiringMoneyCOP = 0;
+
+        baseClients.forEach(c => {
+          const days = getDaysDiff(c.dueDate);
+          const priceNum = parseNum(c.price);
+          totalMonthlyCOP += priceNum;
+
+          if (days < 0) {
+            expired++;
+            expiredMoneyCOP += priceNum;
+          } else if (days <= 3) {
+            expiring++;
+            expiringMoneyCOP += priceNum;
+          } else {
+            active++;
+            collectedCOP += priceNum;
+          }
+
+          if (c.codeStatus !== 'OK') codeIssues++;
+        });
+
+        let totalFreeSlots = 0, accountsWithSpace = 0, fullAccounts = 0, totalMotherCostCOP = 0;
+
+        baseMothers.forEach(m => {
+          const cleanM = String(m.email || '').trim().toLowerCase();
+          const used = clients.filter(c => String(c.accountEmail || '').trim().toLowerCase() === cleanM).length;
+          const free = Math.max(0, (Number(m.maxProfiles) || 5) - used);
+          totalFreeSlots += free;
+          if (free > 0) accountsWithSpace++;
+          else fullAccounts++;
+
+          totalMotherCostCOP += parseNum(m.cost);
+        });
+
+        const netProfitCOP = totalMonthlyCOP - totalMotherCostCOP;
+        const avgTicket = baseClients.length > 0 ? Math.round(totalMonthlyCOP / baseClients.length) : 15000;
+        const potentialExtraCOP = totalFreeSlots * avgTicket;
+
+        const platformBreakdown = PLATFORMS.filter(p => p.id !== 'ALL').map(p => {
+          const pClients = clients.filter(c => c.platform === p.id);
+          const pMothers = mothers.filter(m => m.platform === p.id);
+          const revenue = pClients.reduce((acc, c) => acc + parseNum(c.price), 0);
+          const cost = pMothers.reduce((acc, m) => acc + parseNum(m.cost), 0);
+          const overdue = pClients.filter(c => getDaysDiff(c.dueDate) < 0).reduce((acc, c) => acc + parseNum(c.price), 0);
+          return {
+            ...p,
+            clientCount: pClients.length,
+            motherCount: pMothers.length,
+            revenue,
+            cost,
+            profit: revenue - cost,
+            overdue
+          };
+        }).filter(p => p.clientCount > 0 || p.motherCount > 0);
+
+        return {
+          active, expiring, expired, codeIssues,
+          totalMonthlyCOP, collectedCOP, expiredMoneyCOP, expiringMoneyCOP,
+          totalMotherCostCOP, netProfitCOP, potentialExtraCOP,
+          totalClients: baseClients.length,
+          totalMothers: baseMothers.length,
+          totalFreeSlots, accountsWithSpace, fullAccounts,
+          platformBreakdown
+        };
+      }, [clients, mothers, selectedPlatform]);
+
+      const filteredClients = useMemo(() => {
+        const q = String(searchQuery || '').toLowerCase();
+        return clients
+          .filter(c => selectedPlatform === 'ALL' || c.platform === selectedPlatform)
+          .filter(c => {
+            const days = getDaysDiff(c.dueDate);
+            if (statusFilter === 'ACTIVE') return days > 3;
+            if (statusFilter === 'EXPIRING') return days >= 0 && days <= 3;
+            if (statusFilter === 'EXPIRED') return days < 0;
+            if (statusFilter === 'CODE_ISSUE') return c.codeStatus !== 'OK';
+            return true;
+          })
+          .filter(c => {
+            return (
+              String(c.name || '').toLowerCase().includes(q) ||
+              String(c.accountEmail || '').toLowerCase().includes(q) ||
+              String(c.phone || '').includes(q) ||
+              String(c.pin || '').includes(q) ||
+              String(c.billingDay || '').includes(q)
+            );
+          })
+          .sort((a, b) => getDaysDiff(a.dueDate) - getDaysDiff(b.dueDate));
+      }, [clients, selectedPlatform, statusFilter, searchQuery]);
+
+      const filteredMothers = useMemo(() => {
+        const q = String(searchQuery || '').toLowerCase();
+        return mothers
+          .filter(m => selectedPlatform === 'ALL' || m.platform === selectedPlatform)
+          .filter(m => {
+            const cleanM = String(m.email || '').trim().toLowerCase();
+            const used = clients.filter(c => String(c.accountEmail || '').trim().toLowerCase() === cleanM).length;
+            const isFull = used >= (Number(m.maxProfiles) || 5);
+            if (motherFilter === 'AVAILABLE') return !isFull;
+            if (motherFilter === 'FULL') return isFull;
+            return true;
+          })
+          .filter(m => String(m.email || '').toLowerCase().includes(q));
+      }, [mothers, clients, selectedPlatform, motherFilter, searchQuery]);
+
+      // Descarga una copia a la PC (opcional, además de las copias en la nube)
+      const downloadBackup = () => {
+        const current = stateRef.current;
+        downloadJSON({
+          app: 'CostePlay VIP',
+          exportedAt: new Date().toISOString(),
+          account: authUser ? authUser.email : '',
+          clients: current.clients,
+          mothers: current.mothers,
+          reminderTemplate: current.reminderTemplate
+        }, `Respaldo_CostePlay_${todayISO()}.json`);
+      };
+
+      const readBackupFile = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const parsed = JSON.parse(ev.target.result);
+            const hasClients = parsed && (Array.isArray(parsed.clients) || (parsed.clients && typeof parsed.clients === 'object'));
+            const hasMothers = parsed && (Array.isArray(parsed.mothers) || (parsed.mothers && typeof parsed.mothers === 'object'));
+            if (!hasClients && !hasMothers) throw new Error('El archivo no tiene clientes ni cuentas de CostePlay.');
+            resolve({
+              clients: sanitizeClientList(parsed.clients),
+              mothers: sanitizeMotherList(parsed.mothers),
+              reminderTemplate: typeof parsed.reminderTemplate === 'string' ? parsed.reminderTemplate : ''
+            });
+          } catch (err) { reject(err); }
+        };
+        reader.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+        reader.readAsText(file);
+      });
+
+      const importDataWithConfirm = async (data, sourceLabel) => {
+        const current = stateRef.current;
+        const hasCurrent = current.clients.length > 0 || current.mothers.length > 0;
+        const msg = `${sourceLabel}: ${data.clients.length} clientes y ${data.mothers.length} cuentas madre.\n\n` +
+          (hasCurrent
+            ? `Esto REEMPLAZARÁ tus datos actuales (${current.clients.length} clientes y ${current.mothers.length} cuentas). Antes se guardará una copia de seguridad "Antes de importar" en tu cuenta.\n\n¿Continuar?`
+            : '¿Cargar estos datos en tu cuenta?');
+        if (!window.confirm(msg)) return false;
+        if (hasCurrent && !(await createBackup('manual', 'Antes de importar')) &&
+            !window.confirm('No se pudo guardar la copia previa de tus datos actuales. ¿Continuar de todos modos?')) return false;
+        replaceAllData(data.clients, data.mothers, data.reminderTemplate || current.reminderTemplate);
+        return true;
+      };
+
+      const handleImportBackup = async (e) => {
+        const input = e.target;
+        const file = input.files && input.files[0];
+        input.value = ''; // permite volver a elegir el mismo archivo
+        if (!file) return;
+        try {
+          const data = await readBackupFile(file);
+          if (await importDataWithConfirm(data, `Archivo "${file.name}"`)) setBackupMessage(`✅ Datos de "${file.name}" cargados.`);
+        } catch (err) {
+          alert('Archivo inválido: ' + (err.message || 'formato desconocido'));
+        }
+      };
+
+      const loadLegacyCloudData = async () => {
+        const snap = await window.firebase.database().ref(LEGACY_DATA_PATH).once('value');
+        const d = snap.val();
+        if (!d) throw new Error('No se encontraron datos en la base de datos antigua.');
+        return {
+          clients: sanitizeClientList(d.clients),
+          mothers: sanitizeMotherList(d.mothers),
+          reminderTemplate: typeof d.reminderTemplate === 'string' ? d.reminderTemplate : ''
+        };
+      };
+
+      // ---------- PANTALLAS DE ACCESO ----------
+      if (fbInitError) {
+        return (
+          <AuthShell>
+            <p className="text-sm text-red-300 font-semibold">⚠️ {fbInitError}</p>
+            <button onClick={() => window.location.reload()} className="mt-4 w-full py-3 rounded-xl font-bold text-black bg-amber-500 cursor-pointer">Recargar</button>
+          </AuthShell>
+        );
+      }
+
+      if (authLoading) {
+        return (
+          <AuthShell>
+            <p className="text-sm text-amber-300 font-semibold animate-pulse">Verificando tu sesión…</p>
+          </AuthShell>
+        );
+      }
+
+      if (!authUser) {
+        const isFileProtocol = window.location.protocol === 'file:';
+        return (
+          <AuthShell>
+            <p className="text-sm text-zinc-300 mb-5">Inicia sesión con tu cuenta de Google. Tus clientes y cuentas se guardan solo en la nube, ligados a esa cuenta.</p>
+            {isFileProtocol && (
+              <div className="mb-4 text-left text-xs bg-amber-500/10 border border-amber-500/40 rounded-xl p-3 text-amber-200 leading-relaxed">
+                ⚠️ Abriste el archivo directo desde la carpeta (<span className="font-mono">file://</span>). Google no permite iniciar sesión así.
+                Ábrelo con <strong>Live Server</strong> en VS Code (botón "Go Live") o publícalo en <strong>Firebase Hosting</strong>.
+              </div>
+            )}
+            <button
+              onClick={signInWithGoogle}
+              disabled={signingIn || isFileProtocol}
+              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl font-bold text-zinc-900 bg-white hover:bg-zinc-100 transition shadow-[0_0_25px_rgba(212,175,55,0.25)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <GoogleIcon />
+              {signingIn ? 'Abriendo Google…' : 'Continuar con Google'}
+            </button>
+            {authError && <p className="mt-3 text-xs text-[#ff6b81] font-semibold leading-relaxed">{authError}</p>}
+            <p className="mt-5 text-[11px] text-zinc-500">Cada cuenta de Google ve únicamente sus propios datos.</p>
+          </AuthShell>
+        );
+      }
+
+      // No se muestra el panel hasta tener los datos reales de la nube (así nunca ves una lista vacía por error)
+      if (!serverLoaded) {
+        return (
+          <AuthShell>
+            {cloudStatus === 'ERROR' ? (
+              <p className="text-sm text-red-300 font-semibold leading-relaxed">⚠️ {cloudError}</p>
+            ) : (
+              <p className="text-sm text-amber-300 font-semibold animate-pulse">Cargando tus datos de la nube…</p>
+            )}
+            {slowLoading && cloudStatus !== 'ERROR' && (
+              <p className="text-xs text-zinc-400 mt-3 leading-relaxed">Está tardando más de lo normal. Revisa tu conexión a internet; en cuanto vuelva, tus datos aparecen solos.</p>
+            )}
+            <p className="text-xs text-zinc-500 mt-3">{authUser.email}</p>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => window.location.reload()} className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-amber-500 text-black cursor-pointer">Recargar</button>
+              <button onClick={signOut} className="flex-1 py-2.5 rounded-xl text-xs font-semibold bg-zinc-900 text-zinc-300 border border-zinc-800 cursor-pointer">Cerrar sesión</button>
+            </div>
+          </AuthShell>
+        );
+      }
+
+      const lastBackup = backups[0];
+
+      const activePlatObj = PLATFORMS.find(p => p.id === selectedPlatform) || PLATFORMS[0];
+
+      return (
+        <div className="min-h-screen bg-[#070709] text-zinc-100 pb-16">
+          <header className="sticky top-0 z-30 bg-[#0b0b0f]/95 backdrop-blur-md border-b border-amber-500/20">
+            <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <CostePlayLogo size={44} />
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-extrabold text-lg tracking-wider bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] bg-clip-text text-transparent">
+                      COSTEPLAY
+                    </span>
+                    <button
+                      onClick={() => setIsCloudModalOpen(true)}
+                      className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full border cursor-pointer ${
+                        cloudStatus === 'CONNECTED'
+                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                          : cloudStatus === 'ERROR'
+                          ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                          : 'bg-amber-500/15 text-amber-300 border-amber-500/40 animate-pulse'
+                      }`}
+                    >
+                      {cloudStatus === 'CONNECTED'
+                        ? '☁️ Nube en vivo'
+                        : cloudStatus === 'ERROR'
+                        ? '⚠️ Revisar Firebase'
+                        : cloudStatus === 'OFFLINE'
+                        ? '📴 Sin internet (se guarda al volver)'
+                        : '☁️ Conectando...'}
+                    </button>
+
+                    {saveIndicator === 'SAVING' && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                        ⏳ Guardando...
+                      </span>
+                    )}
+                    {saveIndicator === 'SAVING' && pendingCount > 0 && cloudStatus === 'OFFLINE' && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700">
+                        {pendingCount} cambio(s) en espera
+                      </span>
+                    )}
+                    {saveIndicator === 'SAVED' && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        ✅ Guardado {lastSavedTime}
+                      </span>
+                    )}
+                    {saveIndicator === 'ERROR' && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40">
+                        ⚠️ Error al subir
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-zinc-400 truncate max-w-[260px]" title={authUser.email || ''}>
+                    {authUser.displayName || 'Panel Oficial'} • {authUser.email}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setIsCloudModalOpen(true)}
+                  className={`px-3 py-2 rounded-lg text-xs font-bold border cursor-pointer ${
+                    cloudStatus === 'CONNECTED'
+                      ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/40'
+                      : 'bg-amber-500 text-black border-amber-400 shadow-[0_0_15px_rgba(212,175,55,0.4)]'
+                  }`}
+                >
+                  {cloudStatus === 'CONNECTED' ? '☁️ Nube Conectada' : '☁️ Estado de la Nube'}
+                </button>
+                <button
+                  onClick={() => setIsTemplateModalOpen(true)}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-800 cursor-pointer"
+                >
+                  💬 Mensaje Nequi
+                </button>
+                <button
+                  onClick={() => { setBackupMessage(''); setIsBackupModalOpen(true); }}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 cursor-pointer"
+                  title={lastBackup ? `Última copia: ${formatDateTime(lastBackup.createdAt)}` : 'Aún no hay copias'}
+                >
+                  💾 Copias {lastBackup ? `(${formatDateTime(lastBackup.createdAt)})` : ''}
+                </button>
+                <button
+                  onClick={() => setIsAccountModalOpen(true)}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 cursor-pointer"
+                  title="Mi cuenta de Google"
+                >
+                  {authUser.photoURL
+                    ? <img src={authUser.photoURL} alt="" referrerPolicy="no-referrer" className="w-6 h-6 rounded-full" />
+                    : <span className="w-6 h-6 rounded-full bg-amber-500 text-black font-extrabold flex items-center justify-center">{(authUser.displayName || authUser.email || '?').charAt(0).toUpperCase()}</span>}
+                  Mi cuenta
+                </button>
+                <button
+                  onClick={signOut}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold bg-zinc-900 hover:bg-red-950/60 text-zinc-300 hover:text-red-300 border border-zinc-800 cursor-pointer"
+                >
+                  Cerrar sesión
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-7xl mx-auto px-4 pt-6">
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2.5">
+                <p className="text-xs font-bold uppercase tracking-wider text-amber-400/90">
+                  🎬 Filtra por Plataforma (Mostrando: {activePlatObj.name}):
+                </p>
+                {selectedPlatform !== 'ALL' && (
+                  <button
+                    onClick={() => setSelectedPlatform('ALL')}
+                    className="text-xs font-bold text-amber-300 underline cursor-pointer"
+                  >
+                    Ver todas las plataformas ({clients.length} clientes)
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-3">
+                {PLATFORMS.map((plat) => {
+                  const isSelected = selectedPlatform === plat.id;
+                  const clientCount = plat.id === 'ALL'
+                    ? clients.length
+                    : clients.filter(c => c.platform === plat.id).length;
+
+                  return (
+                    <button
+                      key={plat.id}
+                      onClick={() => setSelectedPlatform(plat.id)}
+                      className={`flex items-center gap-2.5 px-3.5 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition cursor-pointer border ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] text-black border-amber-300 shadow-[0_0_20px_rgba(212,175,55,0.35)]'
+                          : 'bg-[#101016] text-zinc-200 border-zinc-800/90 hover:border-amber-500/40'
+                      }`}
+                    >
+                      <PlatformLogo platformId={plat.id} size={28} />
+                      <span>{plat.name}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${isSelected ? 'bg-black/25 text-black' : 'bg-zinc-800 text-amber-300'}`}>
+                        {clientCount}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RESUMEN FINANCIERO VIP */}
+            <div className="mb-6 bg-gradient-to-br from-[#13110a] via-[#0e0e14] to-[#0a0a0f] border border-amber-500/35 rounded-2xl p-4 shadow-[0_0_30px_rgba(212,175,55,0.1)]">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <span className="text-xs font-extrabold uppercase tracking-wider bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] bg-clip-text text-transparent">
+                  👑 Resumen Financiero VIP • Caja Registradora en Vivo ({activePlatObj.name})
+                </span>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => setIsCostModalOpen(true)}
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 cursor-pointer"
+                  >
+                    ⚙️ Configurar Costos de Cuentas Madre
+                  </button>
+                  <button
+                    onClick={() => setShowFinanceBreakdown(!showFinanceBreakdown)}
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 cursor-pointer"
+                  >
+                    {showFinanceBreakdown ? '▲ Ocultar Desglose' : '📊 Ver Ganancia por Plataforma'}
+                  </button>
+                  <button
+                    onClick={() => setHideMoney(!hideMoney)}
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-800 cursor-pointer"
+                  >
+                    {hideMoney ? '👁️ Mostrar Dinero' : '🙈 Ocultar Cifras'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-[#09090d] border border-amber-500/30 rounded-xl p-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase">💰 Recaudo Mensual Total</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-bold">
+                      {stats.totalClients} perfiles
+                    </span>
+                  </div>
+                  <p className="text-2xl font-extrabold text-amber-400 mt-1">
+                    {formatMoneyDisplay(stats.totalMonthlyCOP)}
+                  </p>
+                  <p className="text-[11px] text-emerald-400 mt-1">
+                    ✅ Al día: <strong>{formatMoneyDisplay(stats.collectedCOP)}</strong> ({stats.active} clientes)
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => { setActiveTab('CLIENTS'); setStatusFilter('EXPIRED'); }}
+                  className={`rounded-xl p-3.5 border cursor-pointer transition ${
+                    stats.expiredMoneyCOP > 0 ? 'bg-[#19070b] border-[#ff1744] shadow-[0_0_20px_rgba(255,23,68,0.28)]' : 'bg-[#09090d] border-zinc-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-extrabold text-red-300 uppercase">🔴 Dinero en la Calle (Vencido)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#ff1744] text-white font-extrabold">
+                      {stats.expired} vencidas
+                    </span>
+                  </div>
+                  <p className="text-2xl font-extrabold text-[#ff1744] mt-1">
+                    {formatMoneyDisplay(stats.expiredMoneyCOP)}
+                  </p>
+                  <p className="text-[11px] text-amber-300 mt-1">
+                    🟡 Por vencer (3d): <strong>{formatMoneyDisplay(stats.expiringMoneyCOP)}</strong> ({stats.expiring})
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => setIsCostModalOpen(true)}
+                  className="bg-[#09090d] border border-zinc-800 hover:border-amber-500/40 rounded-xl p-3.5 cursor-pointer transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase">💳 Costo Cuentas Madre</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 font-bold">
+                      {stats.totalMothers} cuentas
+                    </span>
+                  </div>
+                  <p className="text-2xl font-extrabold text-zinc-200 mt-1">
+                    {formatMoneyDisplay(stats.totalMotherCostCOP)}
+                  </p>
+                  <p className="text-[11px] text-amber-400/90 mt-1 underline">
+                    {stats.totalMotherCostCOP === 0 ? '⚡ Clic aquí para poner cuánto te cuestan' : 'Clic para editar costos de tus cuentas'}
+                  </p>
+                </div>
+
+                <div className="bg-gradient-to-br from-emerald-500/15 via-[#09130e] to-[#09090d] border border-emerald-500/40 rounded-xl p-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-extrabold text-emerald-300 uppercase">👑 Ganancia Libre (Bolsillo)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-extrabold">
+                      Libre
+                    </span>
+                  </div>
+                  <p className="text-2xl font-extrabold text-emerald-400 mt-1">
+                    {formatMoneyDisplay(stats.netProfitCOP)}
+                  </p>
+                  <p className="text-[11px] text-zinc-300 mt-1">
+                    🚀 +{formatMoneyDisplay(stats.potentialExtraCOP)} si vendes los {stats.totalFreeSlots} cupos libres
+                  </p>
+                </div>
+              </div>
+
+              {showFinanceBreakdown && (
+                <div className="mt-4 pt-3 border-t border-zinc-800/90 overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="text-zinc-400 border-b border-zinc-800">
+                        <th className="py-2 px-2">Plataforma</th>
+                        <th className="py-2 px-2">Clientes / Cuentas</th>
+                        <th className="py-2 px-2">Recaudo Mensual</th>
+                        <th className="py-2 px-2">Costo Cuentas</th>
+                        <th className="py-2 px-2">Por Cobrar (Vencido)</th>
+                        <th className="py-2 px-2 text-right">Ganancia Libre</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/60">
+                      {stats.platformBreakdown.map(row => (
+                        <tr key={row.id}>
+                          <td className="py-2 px-2 font-bold flex items-center gap-2">
+                            <PlatformLogo platformId={row.id} size={22} />
+                            <span>{row.name}</span>
+                          </td>
+                          <td className="py-2 px-2 text-zinc-300">
+                            {row.clientCount} perfiles en {row.motherCount} cuentas
+                          </td>
+                          <td className="py-2 px-2 font-bold text-amber-300">{formatMoneyDisplay(row.revenue)}</td>
+                          <td className="py-2 px-2 text-zinc-400">{formatMoneyDisplay(row.cost)}</td>
+                          <td className="py-2 px-2 font-bold text-[#ff1744]">{formatMoneyDisplay(row.overdue)}</td>
+                          <td className="py-2 px-2 font-extrabold text-emerald-400 text-right">{formatMoneyDisplay(row.profit)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+              <button
+                onClick={() => setActiveTab('CLIENTS')}
+                className={`p-4 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
+                  activeTab === 'CLIENTS' ? 'bg-[#14141c] border-amber-400' : 'bg-[#0e0e13] border-zinc-800'
+                }`}
+              >
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
+                    Sección 1 • Día de Corte Fijo Cada Mes
+                  </span>
+                  <h3 className="text-xl font-extrabold text-white mt-0.5">
+                    👥 1. MIS CLIENTES ({stats.totalClients})
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    {stats.expired > 0 ? `🔴 ${stats.expired} cuentas vencidas por cobrar (${formatMoneyDisplay(stats.expiredMoneyCOP)})` : '✅ Todos los cobros al día'}
+                  </p>
+                </div>
+                <span className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-amber-500 text-black">Ver Clientes</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('MOTHERS')}
+                className={`p-4 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
+                  activeTab === 'MOTHERS' ? 'bg-[#14141c] border-emerald-400' : 'bg-[#0e0e13] border-zinc-800'
+                }`}
+              >
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                    Sección 2 • Inventario de Cuentas Madre
+                  </span>
+                  <h3 className="text-xl font-extrabold text-white mt-0.5">
+                    📦 2. MIS CUENTAS: DISPONIBLES / FULL ({stats.totalMothers})
+                  </h3>
+                  <p className="text-xs text-zinc-300 mt-1">
+                    🟢 <strong className="text-emerald-400">{stats.totalFreeSlots} cupos libres</strong> en {stats.accountsWithSpace} cuentas • 🔴 <strong className="text-red-400">{stats.fullAccounts} FULL</strong>
+                  </p>
+                </div>
+                <span className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-emerald-400 text-black">Ver Cupos</span>
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="🔍 Buscar cliente, día de corte (ej. 10), correo o PIN..."
+                className="flex-1 min-w-[240px] bg-[#0e0e13] border border-zinc-800 rounded-xl py-2.5 px-4 text-xs text-zinc-100 focus:outline-none"
+              />
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    setEditingClient(null);
+                    const defaultPlat = selectedPlatform !== 'ALL' ? selectedPlatform : 'NETFLIX';
+                    const firstMotherOfPlat = mothers.find(m => m.platform === defaultPlat);
+                    setPrefilledSlot({
+                      platform: defaultPlat,
+                      accountEmail: firstMotherOfPlat?.email || '',
+                      profileName: 'Perfil 1'
+                    });
+                    setIsClientModalOpen(true);
+                  }}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs text-black bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] hover:brightness-110 shadow-[0_0_20px_rgba(212,175,55,0.3)] cursor-pointer"
+                >
+                  ➕ Nuevo Cliente
+                </button>
+                <button
+                  onClick={() => { setEditingMother(null); setIsMotherModalOpen(true); }}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 cursor-pointer"
+                >
+                  📺 + Agregar Cuenta Disponible
+                </button>
+                <button
+                  onClick={() => setIsBulkMotherModalOpen(true)}
+                  className="px-3.5 py-2.5 rounded-xl font-bold text-xs text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 cursor-pointer"
+                >
+                  ⚡ Pegar Varias Cuentas
+                </button>
+              </div>
+            </div>
+
+            {activeTab === 'CLIENTS' && (
+              <>
+                <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4">
+                  {[
+                    { id: 'ALL', label: `Todas (${stats.totalClients})` },
+                    { id: 'ACTIVE', label: `🟢 Activas (${stats.active})` },
+                    { id: 'EXPIRING', label: `🟡 Por vencer (${stats.expiring})` },
+                    { id: 'EXPIRED', label: `🔴 Vencidas (${stats.expired})` },
+                    { id: 'CODE_ISSUE', label: `📩 Código Hogar / Pasar (${stats.codeIssues})` },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setStatusFilter(tab.id)}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer border ${
+                        statusFilter === tab.id ? 'bg-amber-500 text-black border-amber-400' : 'bg-[#101015] text-zinc-400 border-zinc-800'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredClients.length === 0 && (
+                  <div className="text-center text-sm text-zinc-400 bg-[#0e0e13] border border-dashed border-zinc-800 rounded-2xl p-8">
+                    {clients.length === 0 ? 'Aún no tienes clientes. Usa "➕ Nuevo Cliente" para registrar el primero.' : 'No hay clientes que coincidan con este filtro o búsqueda.'}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredClients.map((client) => {
+                    const days = getDaysDiff(client.dueDate);
+                    const isExpired = days < 0;
+                    const isExpiring = days >= 0 && days <= 3;
+                    const plat = PLATFORMS.find(p => p.id === client.platform) || PLATFORMS[1];
+                    const fixedDay = client.billingDay || 10;
+                    const nextMonthLabel = getNextMonthLabel(client.dueDate, fixedDay);
+
+                    return (
+                      <div
+                        key={client.id}
+                        className={`rounded-2xl p-5 flex flex-col justify-between border ${
+                          isExpired
+                            ? 'bg-[#16070b] border-[#ff1744] shadow-[0_0_28px_rgba(255,23,68,0.4)]'
+                            : isExpiring
+                            ? 'bg-[#13110b] border-amber-500/60'
+                            : 'bg-[#0e0e14] border-zinc-800/90 hover:border-amber-500/40'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2.5">
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="font-extrabold text-base text-white">{client.name}</h3>
+                                {client.isHouseholdHead && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    👑 Cabeza Hogar
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-zinc-400 mt-0.5">📱 +{client.phone || 'Sin número'}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-white/10" style={{ backgroundColor: plat.bgGlow }}>
+                              <PlatformLogo platformId={plat.id} size={26} />
+                              <span className="text-xs font-extrabold text-white">{plat.name}</span>
+                            </div>
+                          </div>
+
+                          <div className="mb-3 flex items-center justify-between bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-1.5">
+                            <span className="text-xs font-extrabold text-amber-300">
+                              📅 Corte fijo: Todos los {fixedDay} de cada mes
+                            </span>
+                            <span className="text-xs font-extrabold text-white">
+                              ${formatCurrency(client.price)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 mb-3">
+                            {isExpired ? (
+                              <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-[#ff1744] text-white shadow-[0_0_16px_#ff1744] animate-pulse">
+                                ● VENCIDA (hace {Math.abs(days)} días)
+                              </span>
+                            ) : isExpiring ? (
+                              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                ● Se vence {days === 0 ? 'HOY' : `en ${days} días`}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                ● Al día ({days} días restantes)
+                              </span>
+                            )}
+
+                            <span className={`text-xs font-bold ${isExpired ? 'text-[#ff1744]' : 'text-zinc-300'}`}>
+                              Próximo: {formatDateEs(client.dueDate)}
+                            </span>
+                          </div>
+
+                          <div className="bg-[#09090d] border border-zinc-800/80 rounded-xl p-3 space-y-2 text-xs mb-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-zinc-400">Cuenta:</span>
+                              <div className="flex items-center gap-1.5 font-mono text-zinc-200 truncate">
+                                <span className="truncate max-w-[170px]">{client.accountEmail}</span>
+                                <button onClick={() => copyText(client.accountEmail, `mail-${client.id}`)} className="text-amber-400 cursor-pointer">
+                                  {copiedId === `mail-${client.id}` ? '✔' : '📋'}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-zinc-400">Perfil / PIN:</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-200 font-semibold">{client.profileName || 'Perfil 1'}</span>
+                                <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-bold">
+                                  🔑 PIN: {client.pin || '----'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mb-3">
+                            <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1.5">
+                              <span>Código Hogar:</span>
+                              <button
+                                onClick={() => updateClients(prev => prev.map(c => c.id === client.id ? { ...c, isHouseholdHead: !c.isHouseholdHead } : c))}
+                                className={`text-[11px] font-semibold cursor-pointer ${client.isHouseholdHead ? 'text-amber-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                              >
+                                {client.isHouseholdHead ? '👑 Es Cabeza de Hogar' : 'Marcar Cabeza de Hogar'}
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {[
+                                { id: 'OK', label: '✅ Todo OK', activeCls: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300' },
+                                { id: 'SENT', label: '📩 Código Env.', activeCls: 'bg-amber-500/20 border-amber-500/50 text-amber-300' },
+                                { id: 'TRANSFER', label: '⚠️ Pasar Cta', activeCls: 'bg-purple-500/25 border-purple-500 text-purple-200' },
+                              ].map(st => (
+                                <button
+                                  key={st.id}
+                                  onClick={() => updateClients(prev => prev.map(c => c.id === client.id ? { ...c, codeStatus: st.id } : c))}
+                                  className={`py-1.5 rounded-lg text-[10px] font-bold border transition cursor-pointer ${
+                                    client.codeStatus === st.id ? st.activeCls : 'bg-zinc-900 border-zinc-800 text-zinc-500'
+                                  }`}
+                                >
+                                  {st.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 pt-2 border-t border-zinc-800/80">
+                          <button
+                            onClick={() => markMonthPaid(client)}
+                            className="w-full py-2 px-3 rounded-xl text-xs font-extrabold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition cursor-pointer"
+                          >
+                            ✅ Ya pagó (Pasar al {nextMonthLabel})
+                          </button>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => sendWhatsAppReminder(client)}
+                              className="flex-1 py-2.5 px-3 rounded-xl text-xs font-bold bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] text-black hover:brightness-110 cursor-pointer"
+                            >
+                              💬 Cobrar {plat.name}
+                            </button>
+                            <button
+                              onClick={() => copyText(buildReminderMessage(client), `msg-${client.id}`)}
+                              className="px-2.5 py-2.5 rounded-xl text-xs font-bold bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-800 cursor-pointer"
+                              title="Copiar mensaje"
+                            >
+                              {copiedId === `msg-${client.id}` ? '✔' : '📋'}
+                            </button>
+                            <button
+                              onClick={() => { setEditingClient(client); setPrefilledSlot(null); setIsClientModalOpen(true); }}
+                              className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 cursor-pointer"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`¿Eliminar a ${client.name} (${plat.name})? Esta acción no se puede deshacer.`)) {
+                                  updateClients(prev => prev.filter(c => c.id !== client.id));
+                                }
+                              }}
+                              title="Eliminar cliente"
+                              className="p-2.5 rounded-xl bg-zinc-900 hover:bg-red-950/60 text-zinc-400 hover:text-red-300 border border-zinc-800 cursor-pointer"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {activeTab === 'MOTHERS' && (
+              <>
+                <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-4">
+                  {[
+                    { id: 'ALL', label: `Todas las Cuentas (${stats.totalMothers})` },
+                    { id: 'AVAILABLE', label: `🟢 Con Cupos Disponibles (${stats.accountsWithSpace})` },
+                    { id: 'FULL', label: `🔴 Cuentas FULL / Llenas (${stats.fullAccounts})` },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setMotherFilter(tab.id)}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer border transition ${
+                        motherFilter === tab.id ? 'bg-emerald-400 text-black border-emerald-300' : 'bg-[#101015] text-zinc-400 border-zinc-800 hover:text-white'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredMothers.length === 0 && (
+                  <div className="text-center text-sm text-zinc-400 bg-[#0e0e13] border border-dashed border-zinc-800 rounded-2xl p-8">
+                    {mothers.length === 0 ? 'Aún no tienes cuentas madre. Usa "📺 + Agregar Cuenta Disponible".' : 'No hay cuentas que coincidan con este filtro o búsqueda.'}
+                  </div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredMothers.map((mother) => {
+                    const cleanMotherEmail = String(mother.email || '').trim().toLowerCase();
+                    const assignedClients = clients.filter(c => String(c.accountEmail || '').trim().toLowerCase() === cleanMotherEmail);
+                    const maxP = Number(mother.maxProfiles) || 5;
+                    const soldCount = assignedClients.length;
+                    const freeCount = Math.max(0, maxP - soldCount);
+                    const isFull = freeCount === 0;
+                    const days = getDaysDiff(mother.renewalDate);
+                    const isExpired = days < 0;
+                    const plat = PLATFORMS.find(p => p.id === mother.platform) || PLATFORMS[1];
+                    const fixedMotherDay = mother.billingDay || 15;
+
+                    const accountRevenue = assignedClients.reduce((acc, c) => acc + parseNum(c.price), 0);
+                    const accountCost = parseNum(mother.cost);
+                    const accountProfit = accountRevenue - accountCost;
+
+                    return (
+                      <div
+                        key={mother.id}
+                        className={`rounded-2xl p-5 border transition flex flex-col justify-between ${
+                          isExpired
+                            ? 'bg-[#16070b] border-[#ff1744] shadow-[0_0_25px_rgba(255,23,68,0.35)]'
+                            : isFull
+                            ? 'bg-[#110d10] border-red-500/40'
+                            : 'bg-[#0c1310] border-emerald-500/40'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-3">
+                            <div className="flex items-center gap-2">
+                              <PlatformLogo platformId={plat.id} size={32} />
+                              <div>
+                                <h4 className="font-extrabold text-sm text-white">{plat.name}</h4>
+                                <p className="text-[11px] text-amber-300 font-semibold">
+                                  Corte cuenta: Todos los {fixedMotherDay} ({formatDateEs(mother.renewalDate)})
+                                </p>
+                              </div>
+                            </div>
+
+                            {isFull ? (
+                              <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-red-500/20 text-red-300 border border-red-500/40">
+                                🔴 FULL ({soldCount}/{maxP})
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
+                                🟢 Quedan {freeCount} libres
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="bg-[#08080b] p-3 rounded-xl border border-zinc-800/90 mb-2.5 space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-mono font-bold text-white truncate">{mother.email}</span>
+                              <button onClick={() => copyText(mother.email, `m-mail-${mother.id}`)} className="text-amber-400 cursor-pointer">
+                                {copiedId === `m-mail-${mother.id}` ? '✔' : '📋'}
+                              </button>
+                            </div>
+                            <p className="text-xs text-zinc-400 font-mono">
+                              Clave: <span className="text-amber-300 font-bold">{mother.password}</span>
+                            </p>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1.5 bg-[#09090d] border border-zinc-800/80 rounded-xl p-2 mb-3 text-center text-[11px]">
+                            <div>
+                              <span className="text-zinc-500 block text-[10px]">Produce</span>
+                              <span className="font-bold text-amber-300">{formatMoneyDisplay(accountRevenue)}</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block text-[10px]">Costo Cta</span>
+                              <span className="font-bold text-zinc-300">{formatMoneyDisplay(accountCost)}</span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block text-[10px]">Ganancia</span>
+                              <span className={`font-extrabold ${accountProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {formatMoneyDisplay(accountProfit)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5 mb-4">
+                            <p className="text-[11px] text-zinc-400 font-bold">
+                              Perfiles ({soldCount} vendidos / {freeCount} disponibles):
+                            </p>
+                            {Array.from({ length: maxP }).map((_, idx) => {
+                              const occupant = assignedClients[idx];
+                              if (occupant) {
+                                const occDay = occupant.billingDay || 10;
+                                return (
+                                  <div
+                                    key={occupant.id}
+                                    onClick={() => { setEditingClient(occupant); setPrefilledSlot(null); setIsClientModalOpen(true); }}
+                                    className="flex items-center justify-between text-xs bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 px-3 py-1.5 rounded-lg cursor-pointer"
+                                  >
+                                    <span className="text-zinc-200 font-semibold truncate">
+                                      {occupant.isHouseholdHead ? '👑 ' : '👤 '}{occupant.name} (Día {occDay})
+                                    </span>
+                                    <span className="text-amber-400 font-mono text-[11px]">PIN: {occupant.pin || '----'} ✏️</span>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    setEditingClient(null);
+                                    setPrefilledSlot({ platform: mother.platform, accountEmail: mother.email, profileName: `Perfil ${idx + 1}` });
+                                    setIsClientModalOpen(true);
+                                  }}
+                                  className="w-full flex items-center justify-between text-xs bg-emerald-500/10 hover:bg-emerald-500/20 border border-dashed border-emerald-500/40 px-3 py-1.5 rounded-lg text-emerald-300 font-bold cursor-pointer"
+                                >
+                                  <span>🟢 Perfil {idx + 1}: DISPONIBLE</span>
+                                  <span className="underline text-[11px]">+ Vender cupo</span>
+                                </button>
+                              );
+                            })}
+                            {assignedClients.length > maxP && (
+                              <div className="mt-1 space-y-1">
+                                <p className="text-[11px] font-bold text-red-300">⚠️ Sobrecupo: {assignedClients.length - maxP} cliente(s) más de los {maxP} perfiles</p>
+                                {assignedClients.slice(maxP).map(extra => (
+                                  <div
+                                    key={extra.id}
+                                    onClick={() => { setEditingClient(extra); setPrefilledSlot(null); setIsClientModalOpen(true); }}
+                                    className="flex items-center justify-between text-xs bg-red-950/40 hover:bg-red-950/60 border border-red-500/40 px-3 py-1.5 rounded-lg cursor-pointer"
+                                  >
+                                    <span className="text-red-200 font-semibold truncate">👤 {extra.name} (Día {extra.billingDay || 10})</span>
+                                    <span className="text-red-300 text-[11px]">Mover ✏️</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-zinc-800/80">
+                          <button
+                            onClick={() => markMotherRenewed(mother)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 cursor-pointer"
+                          >
+                            ✅ Cuenta Renovada (Pasar al mes sig.)
+                          </button>
+                          <div className="flex gap-1.5">
+                            <button onClick={() => { setEditingMother(mother); setIsMotherModalOpen(true); }} className="px-3 py-1.5 rounded-lg text-xs bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 cursor-pointer">
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => {
+                                const warn = soldCount > 0
+                                  ? `\n\nTiene ${soldCount} cliente(s) asignado(s). Los clientes NO se borran, pero quedarán sin cuenta madre.`
+                                  : '';
+                                if (window.confirm(`¿Eliminar la cuenta ${mother.email} (${plat.name})?${warn}`)) {
+                                  updateMothers(prev => prev.filter(m => m.id !== mother.id));
+                                }
+                              }}
+                              title="Eliminar cuenta"
+                              className="px-3 py-1.5 rounded-lg text-xs bg-zinc-900 hover:bg-red-950/60 text-red-400 border border-zinc-800 cursor-pointer">
+                              🗑️
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </main>
+
+          {isCostModalOpen && (
+            <BulkCostModal
+              mothers={mothers}
+              onClose={() => setIsCostModalOpen(false)}
+              onUpdateMothers={(updatedMothers) => {
+                updateMothers(updatedMothers);
+                setIsCostModalOpen(false);
+              }}
+            />
+          )}
+
+          {isCloudModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+              <div className="bg-[#101015] border border-emerald-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4 text-xs my-8">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-lg text-emerald-400">☁️ Estado de la Nube</h3>
+                  <button onClick={() => setIsCloudModalOpen(false)} className="text-zinc-400 hover:text-white text-base cursor-pointer">✕</button>
+                </div>
+
+                <div className="bg-[#08080b] border border-zinc-800 rounded-xl p-3 space-y-1.5 text-zinc-300">
+                  <p>👤 Cuenta: <strong className="text-white">{authUser.email}</strong></p>
+                  <p>🗄️ Base de datos: <span className="font-mono text-emerald-300">{FIREBASE_CONFIG.databaseURL}</span></p>
+                  <p>📍 Tus datos se guardan en: <span className="font-mono text-amber-300">users/{authUser.uid.slice(0, 8)}…</span></p>
+                  <p>
+                    Conexión:{' '}
+                    <strong className={cloudStatus === 'CONNECTED' ? 'text-emerald-400' : cloudStatus === 'ERROR' ? 'text-red-400' : 'text-amber-300'}>
+                      {cloudStatus === 'CONNECTED' ? 'En línea' : cloudStatus === 'OFFLINE' ? 'Sin internet' : cloudStatus === 'ERROR' ? 'Error' : 'Conectando…'}
+                    </strong>
+                    {lastSavedTime && <span className="text-zinc-500"> • Último guardado: {lastSavedTime}</span>}
+                  </p>
+                  <p>Cambios pendientes por subir: <strong className={pendingCount > 0 ? 'text-amber-300' : 'text-emerald-400'}>{pendingCount}</strong></p>
+                </div>
+
+                {cloudError && (
+                  <p className="text-red-400 font-semibold leading-relaxed">⚠️ {cloudError}</p>
+                )}
+
+                <div className="space-y-2">
+                  <p className="text-zinc-300 leading-relaxed">
+                    <strong className="text-amber-300">Reglas de seguridad</strong> que debe tener tu Realtime Database
+                    (Firebase → Realtime Database → Reglas). Así cada cuenta de Google solo puede ver y editar sus propios datos:
+                  </p>
+                  <pre className="bg-[#08080b] border border-zinc-800 rounded-xl p-3 text-[10px] text-emerald-300 overflow-x-auto whitespace-pre">{FIREBASE_RULES_TEXT}</pre>
+                  <button
+                    type="button"
+                    onClick={() => copyText(FIREBASE_RULES_TEXT, 'rules')}
+                    className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-amber-300 font-bold cursor-pointer"
+                  >
+                    {copiedId === 'rules' ? '✔ Copiadas' : '📋 Copiar reglas'}
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setManualMigrationOpen(true); setIsCloudModalOpen(false); }}
+                    className="px-4 py-2.5 rounded-xl bg-zinc-900 text-amber-300 border border-zinc-800 font-semibold cursor-pointer"
+                  >
+                    📥 Traer datos antiguos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCloudModalOpen(false)}
+                    className="px-5 py-2.5 rounded-xl font-bold bg-emerald-400 text-black cursor-pointer"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isClientModalOpen && (
+            <ClientModal
+              client={editingClient}
+              prefilled={prefilledSlot}
+              mothers={mothers}
+              clients={clients}
+              onClose={() => setIsClientModalOpen(false)}
+              onSave={(data) => {
+                const cleanEmail = (data.accountEmail || '').trim().toLowerCase();
+                const matchingMother = mothers.find(m => (m.email || '').trim().toLowerCase() === cleanEmail);
+                const finalData = {
+                  ...data,
+                  accountEmail: (data.accountEmail || '').trim(),
+                  platform: matchingMother ? matchingMother.platform : data.platform
+                };
+
+                if (matchingMother) {
+                  const occupied = clients.filter(c =>
+                    (c.accountEmail || '').trim().toLowerCase() === cleanEmail && (!editingClient || c.id !== editingClient.id)
+                  ).length;
+                  if (occupied >= (Number(matchingMother.maxProfiles) || 5) &&
+                      !window.confirm(`La cuenta ${matchingMother.email} ya está FULL (${occupied}/${matchingMother.maxProfiles}). ¿Guardar de todas formas?`)) {
+                    return;
+                  }
+                }
+
+                if (editingClient) {
+                  updateClients(prev => prev.map(c => (c.id === editingClient.id ? { ...c, ...finalData, id: c.id } : c)));
+                } else {
+                  updateClients(prev => [{ ...finalData, id: newId('c'), createdAt: Date.now() }, ...prev]);
+                }
+                setIsClientModalOpen(false);
+              }}
+            />
+          )}
+
+          {isMotherModalOpen && (
+            <MotherModal
+              mother={editingMother}
+              defaultPlatform={selectedPlatform !== 'ALL' ? selectedPlatform : 'NETFLIX'}
+              onClose={() => setIsMotherModalOpen(false)}
+              onSave={(data) => {
+                const cleanData = { ...data, email: (data.email || '').trim() };
+                const newEmailLower = cleanData.email.toLowerCase();
+                const duplicate = mothers.find(m => m.email.trim().toLowerCase() === newEmailLower && (!editingMother || m.id !== editingMother.id));
+                if (duplicate) {
+                  alert(`Ya tienes registrada la cuenta ${duplicate.email}. No se puede repetir el mismo correo.`);
+                  return;
+                }
+                if (editingMother) {
+                  const oldEmailLower = editingMother.email.trim().toLowerCase();
+                  const emailChanged = oldEmailLower !== newEmailLower;
+                  updateMothers(
+                    prev => prev.map(m => (m.id === editingMother.id ? { ...m, ...cleanData, id: m.id } : m)),
+                    emailChanged
+                      ? (prevClients => prevClients.map(c => ((c.accountEmail || '').trim().toLowerCase() === oldEmailLower ? { ...c, accountEmail: cleanData.email } : c)))
+                      : null
+                  );
+                } else {
+                  updateMothers(prev => [{ ...cleanData, id: newId('m'), createdAt: Date.now() }, ...prev]);
+                }
+                setIsMotherModalOpen(false);
+              }}
+            />
+          )}
+
+          {isBulkMotherModalOpen && (
+            <BulkMotherModal
+              defaultPlatform={selectedPlatform !== 'ALL' ? selectedPlatform : 'NETFLIX'}
+              existingMothers={mothers}
+              onClose={() => setIsBulkMotherModalOpen(false)}
+              onAddBulk={(newList) => {
+                updateMothers(prev => [...newList, ...prev]);
+                setIsBulkMotherModalOpen(false);
+              }}
+            />
+          )}
+
+          {isTemplateModalOpen && (
+            <TemplateModal
+              template={reminderTemplate}
+              onClose={() => setIsTemplateModalOpen(false)}
+              onSave={(t) => { updateTemplate(t); setIsTemplateModalOpen(false); }}
+            />
+          )}
+
+          {isBackupModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+              <div className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4 my-8 text-xs">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-lg text-amber-400">💾 Copias de Seguridad</h3>
+                  <button onClick={() => setIsBackupModalOpen(false)} className="text-zinc-400 hover:text-white text-base cursor-pointer">✕</button>
+                </div>
+                <p className="text-zinc-300 leading-relaxed">
+                  Las copias se guardan en tu cuenta de Google (<strong className="text-white">{authUser.email}</strong>).
+                  Se crea una <strong className="text-emerald-300">automática cada 10 minutos</strong> si hubo cambios, mientras la página esté abierta.
+                  Se conservan las últimas {AUTO_BACKUPS_TO_KEEP} automáticas y {MANUAL_BACKUPS_TO_KEEP} manuales.
+                </p>
+
+                <button
+                  onClick={() => createBackup('manual', 'Copia manual')}
+                  disabled={backupBusy}
+                  className="w-full py-3 rounded-xl text-sm font-extrabold text-black bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] cursor-pointer disabled:opacity-60"
+                >
+                  {backupBusy ? '⏳ Creando copia…' : '➕ Crear copia ahora'}
+                </button>
+                {backupMessage && <p className="font-semibold text-amber-200">{backupMessage}</p>}
+
+                <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1">
+                  {!backupsLoaded && <p className="text-zinc-500">Cargando copias…</p>}
+                  {backupsLoaded && backups.length === 0 && <p className="text-zinc-500">Todavía no hay copias. La primera automática se crea en unos segundos.</p>}
+                  {backups.map(b => (
+                    <div key={b.id} className="flex items-center justify-between gap-2 bg-[#08080b] border border-zinc-800 rounded-xl px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="font-bold text-white">
+                          {b.type === 'auto' ? '🕒 Automática' : '👆 Manual'} • {formatDateTime(b.createdAt) || 'guardando…'}
+                        </p>
+                        <p className="text-zinc-400 truncate">{b.clients} clientes • {b.mothers} cuentas{b.note && b.type !== 'auto' ? ` • ${b.note}` : ''}</p>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => restoreBackup(b)} className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold cursor-pointer">Restaurar</button>
+                        <button onClick={() => downloadCloudBackup(b)} title="Descargar a la PC" className="px-2 py-1.5 rounded-lg bg-zinc-900 text-zinc-300 border border-zinc-800 cursor-pointer">⬇️</button>
+                        <button onClick={() => deleteBackup(b)} title="Borrar copia" className="px-2 py-1.5 rounded-lg bg-zinc-900 text-red-400 border border-zinc-800 cursor-pointer">🗑️</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800">
+                  <button onClick={downloadBackup} className="py-2.5 rounded-xl font-bold bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 cursor-pointer">
+                    ⬇️ Descargar datos actuales (.json)
+                  </button>
+                  <label className="block text-center py-2.5 rounded-xl font-bold bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 cursor-pointer">
+                    ⬆️ Cargar desde archivo .json
+                    <input type="file" accept=".json,application/json" onChange={handleImportBackup} className="hidden" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isAccountModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-sm w-full p-6 space-y-4 text-center">
+                {authUser.photoURL
+                  ? <img src={authUser.photoURL} alt="" referrerPolicy="no-referrer" className="w-16 h-16 rounded-full mx-auto border-2 border-amber-400" />
+                  : <div className="w-16 h-16 rounded-full mx-auto bg-amber-500 text-black text-2xl font-extrabold flex items-center justify-center">{(authUser.displayName || authUser.email || '?').charAt(0).toUpperCase()}</div>}
+                <div>
+                  <p className="font-extrabold text-white">{authUser.displayName || 'Usuario'}</p>
+                  <p className="text-xs text-zinc-400">{authUser.email}</p>
+                </div>
+                <p className="text-xs text-zinc-300 bg-[#08080b] border border-zinc-800 rounded-xl p-3">
+                  {clients.length} clientes • {mothers.length} cuentas madre guardados en esta cuenta de Google.
+                </p>
+                <button onClick={signOut} className="w-full py-2.5 rounded-xl text-xs font-bold bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer">
+                  Cerrar sesión
+                </button>
+                <button onClick={() => setIsAccountModalOpen(false)} className="w-full py-2.5 rounded-xl text-xs font-bold bg-amber-500 text-black cursor-pointer">
+                  Listo
+                </button>
+              </div>
+            </div>
+          )}
+
+          {((needsMigration && serverLoaded) || manualMigrationOpen) && (
+            <MigrationModal
+              onLoadLegacyCloud={loadLegacyCloudData}
+              onReadFile={readBackupFile}
+              onImport={(data, label) => importDataWithConfirm(data, label)}
+              onStartEmpty={() => {
+                if (window.confirm('¿Empezar con la cuenta vacía? Podrás importar un respaldo después desde "💾 Respaldo".')) {
+                  commit(null, null, null, { 'meta/migrated': true });
+                  setNeedsMigration(false);
+                  setManualMigrationOpen(false);
+                }
+              }}
+              onClose={() => { setNeedsMigration(false); setManualMigrationOpen(false); }}
+            />
+          )}
+        </div>
+      );
+    }
+
+    const FIREBASE_RULES_TEXT = `{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "backups": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "backupsIndex": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "costeplay_vip_data": {
+      ".read": "auth != null && auth.token.email === 'TU_CORREO@gmail.com'",
+      ".write": false
+    }
+  }
+}`;
+
+    const GoogleIcon = () => (
+      <svg viewBox="0 0 48 48" className="w-5 h-5 shrink-0" aria-hidden="true">
+        <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/>
+        <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+        <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/>
+        <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/>
+      </svg>
+    );
+
+    const AuthShell = ({ children, wide = false }) => (
+      <div className="min-h-screen bg-[#070709] text-white flex flex-col items-center justify-center p-4">
+        <div className={`w-full ${wide ? 'max-w-xl' : 'max-w-md'} bg-[#0e0e12]/95 border border-amber-500/30 rounded-2xl p-8 shadow-[0_0_50px_rgba(212,175,55,0.15)] text-center`}>
+          <div className="flex justify-center mb-3">
+            <CostePlayLogo size={88} />
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-wider bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#AA771C] bg-clip-text text-transparent">
+            COSTEPLAY
+          </h1>
+          <p className="text-xs uppercase tracking-[0.25em] text-amber-400/90 mt-1 font-semibold">
+            By Jose Chaves • "El Coste"
+          </p>
+          <div className="flex items-center justify-center gap-2 my-5 flex-wrap">
+            {PLATFORMS.filter(p => p.id !== 'ALL').map(p => (
+              <PlatformLogo key={p.id} platformId={p.id} size={28} />
+            ))}
+          </div>
+          {children}
+        </div>
+      </div>
+    );
+
+    function TemplateModal({ template, onClose, onSave }) {
+      const [draft, setDraft] = useState(template || DEFAULT_REMINDER_TEMPLATE);
+      const changed = draft !== template;
+      const tryClose = () => {
+        if (changed && !window.confirm('Tienes cambios sin guardar en la plantilla. ¿Salir sin guardar?')) return;
+        onClose();
+      };
+      return (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-lg w-full p-6">
+            <h3 className="font-bold text-lg text-amber-400 mb-2">💬 Plantilla Oficial de Cobro (Nequi)</h3>
+            <p className="text-[11px] text-zinc-400 mb-2">
+              Variables: <span className="font-mono text-amber-300">{'{cliente} {plataforma} {valor} {dia_corte} {vencimiento} {correo} {perfil} {pin}'}</span>
+            </p>
+            <textarea
+              rows={11}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-3 text-xs text-zinc-100 font-mono"
+            />
+            <div className="flex flex-wrap justify-end gap-2 mt-4">
+              <button onClick={() => setDraft(DEFAULT_REMINDER_TEMPLATE)} className="px-3 py-2 rounded-xl text-xs bg-zinc-900 text-zinc-400 cursor-pointer">
+                Restaurar original
+              </button>
+              <button onClick={tryClose} className="px-3 py-2 rounded-xl text-xs bg-zinc-900 text-zinc-300 cursor-pointer">
+                Cancelar
+              </button>
+              <button onClick={() => onSave(draft.trim() ? draft : DEFAULT_REMINDER_TEMPLATE)} className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 text-black cursor-pointer">
+                Guardar Plantilla
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function MigrationModal({ onLoadLegacyCloud, onReadFile, onImport, onStartEmpty, onClose }) {
+      const [busy, setBusy] = useState('');
+      const [msg, setMsg] = useState('');
+
+      const fromCloud = async () => {
+        setBusy('cloud'); setMsg('');
+        try {
+          const data = await onLoadLegacyCloud();
+          await onImport(data, 'Nube antigua (sin login)');
+        } catch (err) {
+          const denied = String((err && (err.code || err.message)) || '').toUpperCase().includes('PERMISSION');
+          setMsg(denied
+            ? 'Las reglas de Firebase no permiten leer la base antigua con esta cuenta. Pon tu correo en la regla "costeplay_vip_data" (ver Estado de la Nube) o usa tu archivo de respaldo.'
+            : ((err && err.message) || 'No se pudo leer la nube antigua.'));
+        }
+        setBusy('');
+      };
+
+      const fromFile = async (e) => {
+        const input = e.target;
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        setBusy('file'); setMsg('');
+        try {
+          const data = await onReadFile(file);
+          await onImport(data, `Archivo "${file.name}"`);
+        } catch (err) {
+          setMsg('Archivo inválido: ' + ((err && err.message) || 'formato desconocido'));
+        }
+        setBusy('');
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-3 text-xs my-8">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-lg text-amber-400">📥 Traer tus datos a esta cuenta</h3>
+              <button onClick={onClose} className="text-zinc-400 hover:text-white text-base cursor-pointer">✕</button>
+            </div>
+            <p className="text-zinc-300 leading-relaxed">Elige de dónde copiar tus clientes y cuentas. Nada se borra de la fuente original.</p>
+
+            <button
+              onClick={fromCloud}
+              disabled={busy === 'cloud'}
+              className="w-full text-left p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-60 cursor-pointer"
+            >
+              <span className="font-bold text-amber-300 block">☁️ Desde la nube antigua (sin login)</span>
+              <span className="text-zinc-400">{busy === 'cloud' ? 'Leyendo…' : 'Lo que estaba en "costeplay_vip_data".'}</span>
+            </button>
+
+            <label className="w-full block text-left p-3 rounded-xl border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 cursor-pointer">
+              <span className="font-bold text-zinc-200 block">📄 Desde un archivo de respaldo (.json)</span>
+              <span className="text-zinc-400">{busy === 'file' ? 'Leyendo…' : 'Por ejemplo Respaldo_CostePlay_2026-10-23.json'}</span>
+              <input type="file" accept=".json,application/json" onChange={fromFile} className="hidden" />
+            </label>
+
+            {msg && <p className="text-[#ff6b81] font-semibold leading-relaxed">{msg}</p>}
+
+            <div className="flex justify-between gap-2 pt-1">
+              <button onClick={onStartEmpty} className="px-3 py-2 rounded-xl bg-zinc-900 text-zinc-400 cursor-pointer">Empezar vacío</button>
+              <button onClick={onClose} className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 cursor-pointer">Decidir después</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function BulkCostModal({ mothers, onClose, onUpdateMothers }) {
+      const [platformCosts, setPlatformCosts] = useState(() => {
+        const map = {};
+        PLATFORMS.filter(p => p.id !== 'ALL').forEach(p => {
+          const existing = mothers.find(m => m.platform === p.id && m.cost);
+          map[p.id] = existing ? existing.cost : '';
+        });
+        return map;
+      });
+
+      const handleApplyAll = (e) => {
+        e.preventDefault();
+        const updated = mothers.map(m => {
+          const newCost = platformCosts[m.platform];
+          if (newCost !== undefined && newCost !== '') {
+            return { ...m, cost: String(newCost).replace(/\D/g, '') };
+          }
+          return m;
+        });
+        onUpdateMothers(updated);
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <form onSubmit={handleApplyAll} className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-lg text-amber-400">💳 Costo Mensual de tus Cuentas Madre</h3>
+              <button type="button" onClick={onClose} className="text-zinc-400 hover:text-white text-base">✕</button>
+            </div>
+            <p className="text-zinc-300">
+              Escribe cuánto te cuesta a ti cada cuenta completa al mes. El sistema lo guardará directamente en Firebase y calculará tu <strong>Ganancia Libre</strong>:
+            </p>
+
+            <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
+              {PLATFORMS.filter(p => p.id !== 'ALL').map(p => {
+                const count = mothers.filter(m => m.platform === p.id).length;
+                return (
+                  <div key={p.id} className="flex items-center justify-between gap-3 bg-[#08080b] border border-zinc-800 rounded-xl p-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <PlatformLogo platformId={p.id} size={28} />
+                      <div>
+                        <span className="font-bold text-white block">{p.name}</span>
+                        <span className="text-[10px] text-zinc-400">{count} cuentas registradas</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-zinc-400 font-bold">$</span>
+                      <input
+                        type="text"
+                        placeholder="Ej. 38000"
+                        value={platformCosts[p.id] || ''}
+                        onChange={(e) => setPlatformCosts({ ...platformCosts, [p.id]: e.target.value })}
+                        className="w-28 bg-[#101016] border border-amber-500/40 rounded-lg p-2 text-amber-300 font-bold text-right"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-zinc-900 text-zinc-400 cursor-pointer">
+                Cancelar
+              </button>
+              <button type="submit" className="px-5 py-2.5 rounded-xl font-bold bg-gradient-to-r from-[#FFF3B0] via-[#D4AF37] to-[#B38728] text-black cursor-pointer">
+                Guardar Costos en la Nube
+              </button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    function ClientModal({ client, prefilled, mothers, onClose, onSave }) {
+      const today = new Date();
+      const defaultDay = client?.billingDay || (client?.dueDate ? Number(client.dueDate.split('-')[2]) : 10);
+
+      const computeDateFromDay = (dayNum, mode) => {
+        const y = today.getFullYear();
+        const m = today.getMonth();
+        if (mode === 'THIS_MONTH') return buildDateForDay(y, m, dayNum);
+        const nextM = m + 1 > 11 ? 0 : m + 1;
+        const nextY = m + 1 > 11 ? y + 1 : y;
+        return buildDateForDay(nextY, nextM, dayNum);
+      };
+
+      const [form, setForm] = useState(
+        client || {
+          name: '',
+          phone: '57',
+          platform: prefilled?.platform || 'NETFLIX',
+          accountEmail: prefilled?.accountEmail || mothers[0]?.email || '',
+          profileName: prefilled?.profileName || 'Perfil 1',
+          pin: '',
+          billingDay: defaultDay,
+          dueDate: computeDateFromDay(defaultDay, 'NEXT_MONTH'),
+          price: '15000',
+          isHouseholdHead: false,
+          codeStatus: 'OK',
+        }
+      );
+
+      const handleDayChange = (newDay) => {
+        const dayNum = Math.max(1, Math.min(31, Number(newDay) || 1));
+        const [y, m] = (isValidISODate(form.dueDate) ? form.dueDate : todayISO()).split('-').map(Number);
+        const updatedDue = buildDateForDay(y, m - 1, dayNum);
+        setForm({ ...form, billingDay: dayNum, dueDate: updatedDue });
+      };
+
+      const handleEmailChange = (newEmail) => {
+        const clean = newEmail.trim().toLowerCase();
+        const foundMother = mothers.find(m => (m.email || '').trim().toLowerCase() === clean);
+        setForm({
+          ...form,
+          accountEmail: newEmail,
+          platform: foundMother ? foundMother.platform : form.platform
+        });
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const phoneDigits = String(form.phone || '').replace(/\D/g, '');
+              if (phoneDigits.length < 10) { alert('El WhatsApp debe tener al menos 10 dígitos (ej. 573001234567).'); return; }
+              const priceDigits = String(form.price || '').replace(/\D/g, '');
+              if (!priceDigits) { alert('Escribe cuánto debe pagar el cliente (solo números).'); return; }
+              if (!isValidISODate(form.dueDate)) { alert('La fecha de corte no es válida.'); return; }
+              onSave({ ...form, name: String(form.name || '').trim(), phone: phoneDigits, price: priceDigits });
+            }}
+            className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-xl w-full p-6 space-y-4 my-8"
+          >
+            <h3 className="font-extrabold text-lg text-amber-400">
+              {client ? 'Editar Cliente' : 'Registrar Cliente • CostePlay'}
+            </h3>
+
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {PLATFORMS.filter(p => p.id !== 'ALL').map(p => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => setForm({ ...form, platform: p.id })}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl border text-[11px] font-bold cursor-pointer ${
+                    form.platform === p.id ? 'bg-amber-500/20 border-amber-400 text-white' : 'bg-[#09090d] border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <PlatformLogo platformId={p.id} size={26} />
+                  <span className="truncate w-full text-center">{p.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="text-zinc-400 block mb-1">Nombre del Cliente *</label>
+                <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white" />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">WhatsApp (con 57) *</label>
+                <input required inputMode="tel" placeholder="573001234567" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white" />
+              </div>
+
+              <div className="sm:col-span-2 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <label className="text-amber-300 font-extrabold block text-xs">
+                      📅 Día de Corte Fijo (Se repite todos los meses) *
+                    </label>
+                  </div>
+                  <select
+                    value={form.billingDay}
+                    onChange={(e) => handleDayChange(e.target.value)}
+                    className="bg-[#08080b] border border-amber-400 rounded-xl px-3 py-2 text-sm font-extrabold text-amber-300 cursor-pointer"
+                  >
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                      <option key={day} value={day}>Todos los {day} de cada mes</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, dueDate: computeDateFromDay(form.billingDay, 'NEXT_MONTH') })}
+                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 cursor-pointer"
+                  >
+                    🟢 Ya pagó este mes (Corta el {form.billingDay} del otro mes)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, dueDate: computeDateFromDay(form.billingDay, 'THIS_MONTH') })}
+                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-red-500/20 text-red-300 border border-red-500/40 cursor-pointer"
+                  >
+                    🔴 Debe este mes (Corta el {form.billingDay} de este mes)
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-zinc-400 block mb-1">Cuánto debe pagar ($) *</label>
+                <input required inputMode="numeric" placeholder="Ej. 15000" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value.replace(/[^\d]/g, '') })} className="w-full bg-[#08080b] border border-amber-500/40 rounded-xl p-2.5 text-amber-300 font-bold" />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">Próxima fecha exacta de corte *</label>
+                <input
+                  type="date"
+                  required
+                  value={form.dueDate}
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    const dayPart = newDate ? Number(newDate.split('-')[2]) : form.billingDay;
+                    setForm({ ...form, dueDate: newDate, billingDay: dayPart });
+                  }}
+                  className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="text-zinc-400 block mb-1">Correo de la Cuenta Asignada *</label>
+                <input
+                  required
+                  list="mothers-datalist"
+                  value={form.accountEmail}
+                  onChange={(e) => handleEmailChange(e.target.value)}
+                  className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white font-mono"
+                />
+                <datalist id="mothers-datalist">
+                  {mothers.map(m => (
+                    <option key={m.id} value={m.email}>{m.platform} — {m.email}</option>
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">Perfil asignado</label>
+                <input value={form.profileName} onChange={(e) => setForm({ ...form, profileName: e.target.value })} className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white" />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">PIN del Perfil</label>
+                <input value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value })} className="w-full bg-[#08080b] border border-amber-500/40 rounded-xl p-2.5 text-amber-300 font-mono font-bold" />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-xs bg-zinc-900 text-zinc-400 cursor-pointer">Cancelar</button>
+              <button type="submit" className="px-5 py-2 rounded-xl text-xs font-bold bg-amber-500 text-black cursor-pointer">Guardar Cliente</button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    function MotherModal({ mother, defaultPlatform, onClose, onSave }) {
+      const defaultPlatObj = PLATFORMS.find(p => p.id === (defaultPlatform || 'NETFLIX')) || PLATFORMS[1];
+      const [form, setForm] = useState(
+        mother || {
+          platform: defaultPlatObj.id,
+          email: '',
+          password: '',
+          billingDay: new Date().getDate(),
+          renewalDate: getNextMonthSameDay(todayISO(), new Date().getDate()),
+          maxProfiles: defaultPlatObj.maxProfiles,
+          cost: '',
+        }
+      );
+
+      return (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const email = String(form.email || '').trim();
+              if (!email) { alert('Escribe el correo de la cuenta.'); return; }
+              const maxP = Number(form.maxProfiles);
+              if (!maxP || maxP < 1 || maxP > 20) { alert('El total de perfiles debe estar entre 1 y 20.'); return; }
+              if (!isValidISODate(form.renewalDate)) { alert('La fecha de corte no es válida.'); return; }
+              onSave({ ...form, email, maxProfiles: maxP, cost: String(form.cost || '').replace(/\D/g, '') });
+            }}
+            className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4 text-xs my-8"
+          >
+            <h3 className="font-extrabold text-lg text-amber-400">{mother ? 'Editar Cuenta Madre' : 'Nueva Cuenta para Inventario'}</h3>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {PLATFORMS.filter(p => p.id !== 'ALL').map(p => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => setForm({ ...form, platform: p.id, maxProfiles: p.maxProfiles })}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl border text-[11px] font-bold cursor-pointer ${
+                    form.platform === p.id ? 'bg-amber-500/20 border-amber-400 text-white' : 'bg-[#09090d] border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <PlatformLogo platformId={p.id} size={26} />
+                  <span className="truncate w-full text-center">{p.name}</span>
+                </button>
+              ))}
+            </div>
+            <div>
+              <label className="text-zinc-400 block mb-1">Correo de la Cuenta *</label>
+              <input required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white font-mono" />
+            </div>
+            <div>
+              <label className="text-zinc-400 block mb-1">Contraseña *</label>
+              <input required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white font-mono" />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-zinc-400 block mb-1">Total Perfiles</label>
+                <input type="number" min="1" max="20" value={form.maxProfiles} onChange={(e) => setForm({ ...form, maxProfiles: e.target.value === '' ? '' : Number(e.target.value) })} className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white" />
+              </div>
+              <div>
+                <label className="text-amber-300 font-bold block mb-1">Costo Mensual ($)</label>
+                <input
+                  type="text"
+                  placeholder="Ej. 38000"
+                  inputMode="numeric"
+                  value={form.cost || ''}
+                  onChange={(e) => setForm({ ...form, cost: e.target.value.replace(/[^\d]/g, '') })}
+                  className="w-full bg-[#08080b] border border-amber-500/40 rounded-xl p-2.5 text-amber-300 font-bold"
+                />
+              </div>
+              <div>
+                <label className="text-zinc-400 block mb-1">Fecha de Corte</label>
+                <input
+                  type="date"
+                  value={form.renewalDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const dayNum = val ? Number(val.split('-')[2]) : form.billingDay;
+                    setForm({ ...form, renewalDate: val, billingDay: dayNum });
+                  }}
+                  className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-2.5 text-white"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-zinc-900 text-zinc-400 cursor-pointer">Cancelar</button>
+              <button type="submit" className="px-5 py-2 rounded-xl font-bold bg-amber-500 text-black cursor-pointer">Guardar Cuenta</button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    function BulkMotherModal({ defaultPlatform, existingMothers, onClose, onAddBulk }) {
+      const [platform, setPlatform] = useState(defaultPlatform || 'NETFLIX');
+      const [costPerAccount, setCostPerAccount] = useState('');
+      const [rawText, setRawText] = useState('');
+
+      const handleProcess = (e) => {
+        e.preventDefault();
+        const platObj = PLATFORMS.find(p => p.id === platform) || PLATFORMS[1];
+        const known = new Set((existingMothers || []).map(m => m.email.trim().toLowerCase()));
+        const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const created = [];
+        const skipped = [];
+        const stamp = Date.now();
+        const day = new Date().getDate();
+        lines.forEach((line, idx) => {
+          // Formatos aceptados: correo:clave  correo;clave  correo|clave  correo,clave  correo clave
+          const match = line.match(/^([^\s:;|,]+@[^\s:;|,]+)(?:\s*[:;|,]\s*|\s+)?(.*)$/);
+          if (!match) { skipped.push(`${line} (sin correo válido)`); return; }
+          const email = match[1].trim();
+          const lower = email.toLowerCase();
+          if (known.has(lower)) { skipped.push(`${email} (ya existe)`); return; }
+          known.add(lower);
+          created.push({
+            id: 'm_bulk_' + stamp + '_' + idx,
+            platform,
+            email,
+            password: (match[2] || '').trim(),
+            maxProfiles: platObj.maxProfiles,
+            cost: costPerAccount.replace(/\D/g, ''),
+            billingDay: day,
+            renewalDate: getNextMonthSameDay(todayISO(), day),
+            createdAt: stamp
+          });
+        });
+        if (skipped.length) alert(`Se omitieron ${skipped.length} renglón(es):\n` + skipped.slice(0, 15).join('\n'));
+        if (created.length > 0) onAddBulk(created);
+        else if (!skipped.length) alert('Pega al menos una cuenta (correo:clave).');
+      };
+
+      return (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <form onSubmit={handleProcess} className="bg-[#101015] border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4 text-xs">
+            <h3 className="font-extrabold text-lg text-amber-400">⚡ Pegar Varias Cuentas de una vez</h3>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {PLATFORMS.filter(p => p.id !== 'ALL').map(p => (
+                <button
+                  type="button"
+                  key={p.id}
+                  onClick={() => setPlatform(p.id)}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl border text-[11px] font-bold cursor-pointer ${
+                    platform === p.id ? 'bg-amber-500/20 border-amber-400 text-white' : 'bg-[#09090d] border-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  <PlatformLogo platformId={p.id} size={24} />
+                  <span className="truncate w-full text-center">{p.name}</span>
+                </button>
+              ))}
+            </div>
+            <div>
+              <label className="text-amber-300 font-bold block mb-1">Costo mensual de cada una de estas cuentas ($) (Opcional)</label>
+              <input
+                type="text"
+                placeholder="Ej. 38000"
+                value={costPerAccount}
+                onChange={(e) => setCostPerAccount(e.target.value)}
+                className="w-full bg-[#08080b] border border-amber-500/40 rounded-xl p-2.5 text-amber-300 font-bold"
+              />
+            </div>
+            <textarea
+              rows={5}
+              placeholder="Pega una cuenta por renglón (correo:clave)"
+              value={rawText}
+              onChange={(e) => setRawText(e.target.value)}
+              className="w-full bg-[#08080b] border border-zinc-800 rounded-xl p-3 text-white font-mono"
+            />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-zinc-900 text-zinc-400 cursor-pointer">Cancelar</button>
+              <button type="submit" className="px-5 py-2 rounded-xl font-bold bg-amber-500 text-black cursor-pointer">Cargar Cuentas</button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
